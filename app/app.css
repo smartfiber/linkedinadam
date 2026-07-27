@@ -1541,3 +1541,257 @@ button:disabled {
     grid-column: auto;
   }
 }
+
+.analytics-page {
+  min-height: 100vh;
+  padding: 42px;
+}
+
+.analytics-header,
+.analytics-page > .form-error,
+.analytics-toolbar,
+.analytics-stats,
+.analytics-grid,
+.analytics-page > .panel,
+.analytics-breakdowns {
+  max-width: 1500px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.analytics-header {
+  margin-bottom: 24px;
+}
+
+.analytics-header .back-link {
+  display: inline-block;
+  margin-bottom: 24px;
+  color: #1675e7;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.analytics-header p:last-child {
+  max-width: 720px;
+  color: #69758c;
+  line-height: 1.6;
+}
+
+.analytics-filters,
+.history-post-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.analytics-filters select,
+.history-post-picker select,
+.metric-entry-form input,
+.metric-entry-form select {
+  padding: 10px 11px;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+  color: #172033;
+  background: white;
+  font: inherit;
+}
+
+.analytics-stats {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.analytics-stats article {
+  padding: 18px;
+  border: 1px solid #e1e6ee;
+  border-radius: 13px;
+  background: white;
+  box-shadow: 0 8px 25px rgba(24, 37, 62, 0.04);
+}
+
+.analytics-stats span,
+.analytics-stats strong {
+  display: block;
+}
+
+.analytics-stats span {
+  margin-bottom: 9px;
+  color: #69758c;
+  font-size: 12px;
+}
+
+.analytics-stats strong {
+  font-size: 24px;
+}
+
+.analytics-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.7fr);
+  gap: 20px;
+}
+
+.metric-entry-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.metric-entry-form label {
+  display: grid;
+  gap: 6px;
+  color: #4c5870;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.metric-entry-wide {
+  grid-column: 1 / -1;
+}
+
+.insight-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.insight-list p {
+  margin: 0;
+  padding: 13px;
+  border-radius: 10px;
+  color: #465168;
+  font-size: 13px;
+  line-height: 1.55;
+  background: #f5f8fc;
+}
+
+.analytics-table-wrap {
+  overflow-x: auto;
+}
+
+.analytics-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.analytics-table th,
+.analytics-table td {
+  padding: 13px 12px;
+  border-bottom: 1px solid #e8ecf2;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.analytics-table th {
+  color: #758196;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.analytics-table td {
+  color: #3e4a60;
+  font-size: 13px;
+}
+
+.analytics-table td strong,
+.analytics-table td span {
+  display: block;
+}
+
+.analytics-table td span {
+  margin-top: 4px;
+  color: #8590a2;
+  font-size: 11px;
+}
+
+.analytics-breakdowns {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.breakdown-list {
+  display: grid;
+  gap: 9px;
+  margin-top: 16px;
+}
+
+.breakdown-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border-radius: 8px;
+  background: #f7f9fc;
+}
+
+.breakdown-list strong,
+.breakdown-list span {
+  font-size: 12px;
+}
+
+.breakdown-list span {
+  color: #778398;
+  text-align: right;
+}
+
+.snapshot-history-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.snapshot-history-list article {
+  display: grid;
+  gap: 5px;
+  padding: 13px;
+  border: 1px solid #e5eaf1;
+  border-radius: 10px;
+}
+
+.snapshot-history-list span,
+.snapshot-history-list small {
+  color: #748096;
+}
+
+.snapshot-history-list p {
+  margin: 3px 0 0;
+  color: #4d5a71;
+}
+
+@media (max-width: 1150px) {
+  .analytics-stats {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .analytics-breakdowns {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 850px) {
+  .analytics-page {
+    padding: 24px 16px;
+  }
+
+  .analytics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-entry-form {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-entry-wide {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 600px) {
+  .analytics-stats,
+  .analytics-breakdowns {
+    grid-template-columns: 1fr;
+  }
+}

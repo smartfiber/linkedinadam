@@ -1332,6 +1332,7 @@ export default function Home({
           <a href="#employees">Employees</a>
           <a href="#content">Content</a>
           <a href="/calendar">Calendar</a>
+          <a href="/analytics">Analytics</a>
           <a href="#activity">Activity</a>
           <a href="#add-employee">Add Employee</a>
           <a href="#agents">Agents</a>
