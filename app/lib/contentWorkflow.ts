@@ -5,6 +5,7 @@ export type ContentWorkflowDraft = {
   scheduled_for: string | null;
   image_key: string | null;
   image_status: string | null;
+  body?: string;
 };
 
 export type ContentOperationalState =
@@ -60,6 +61,10 @@ export function getContentOperationalState(
 export function getPublishBlocker(
   draft: ContentWorkflowDraft,
 ) {
+  if ("body" in draft && !draft.body?.trim()) {
+    return "Add post copy before approving or publishing this draft.";
+  }
+
   if (draft.status !== "approved") {
     return "A post must be approved before publication.";
   }

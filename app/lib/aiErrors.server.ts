@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 
-type AIOperation = "post" | "image";
+type AIOperation = "post" | "image" | "plan";
 
 function safeDiagnosticValue(value: unknown) {
   if (typeof value !== "string") {
@@ -12,7 +12,12 @@ function safeDiagnosticValue(value: unknown) {
     : null;
 }
 
-function getSafeAPIDiagnostic(error: OpenAI.APIError) {
+function getSafeAPIDiagnostic(error: {
+  status?: number;
+  code?: unknown;
+  type?: unknown;
+  param?: unknown;
+}) {
   const fields = [
     `status=${error.status ?? "unknown"}`,
     safeDiagnosticValue(error.code)
@@ -34,7 +39,11 @@ export function getSafeOpenAIErrorMessage(
   operation: AIOperation,
 ) {
   const subject =
-    operation === "image" ? "image" : "post draft";
+    operation === "image"
+      ? "image"
+      : operation === "plan"
+        ? "weekly content plan"
+        : "post draft";
 
   if (error instanceof OpenAI.AuthenticationError) {
     return `OpenAI could not authenticate while generating the ${subject}. Check the configured Worker secret.`;
@@ -100,7 +109,7 @@ export function getSafeOpenAIErrorMessage(
       message.includes("unsupported") ||
       message.includes("invalid value")
     ) {
-      return `OpenAI rejected an image-generation setting. The deployed model configuration needs to be updated.`;
+      return `OpenAI rejected a generation setting for the ${subject}. The model configuration needs to be updated.`;
     }
 
     return `OpenAI rejected the ${subject} request (${getSafeAPIDiagnostic(error)}).`;

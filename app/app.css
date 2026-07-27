@@ -1795,3 +1795,258 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+.planner-page {
+  min-height: 100vh;
+  padding: 42px;
+  background: #f7f9fc;
+}
+
+.planner-header,
+.planner-page > .form-error,
+.planner-toolbar,
+.planner-layout,
+.planner-page > .empty-state {
+  max-width: 1500px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.planner-header {
+  margin-bottom: 24px;
+}
+
+.planner-header .back-link {
+  display: inline-block;
+  margin-bottom: 24px;
+  color: #1675e7;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.planner-header p:last-child {
+  max-width: 760px;
+  color: #69758c;
+  line-height: 1.6;
+}
+
+.planner-toolbar {
+  display: grid;
+  gap: 18px;
+  margin-bottom: 20px;
+}
+
+.planner-filter {
+  display: flex;
+  gap: 10px;
+}
+
+.planner-filter select,
+.planner-generator input,
+.planner-generator textarea,
+.plan-review-form input,
+.plan-convert-form input {
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+  color: #172033;
+  background: white;
+  font: inherit;
+}
+
+.planner-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.42fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.planner-generator {
+  position: sticky;
+  top: 20px;
+}
+
+.planner-generator > p,
+.planner-generator > small {
+  color: #69758c;
+  line-height: 1.55;
+}
+
+.planner-generator form {
+  display: grid;
+  gap: 14px;
+  margin: 18px 0;
+}
+
+.planner-generator label {
+  display: grid;
+  gap: 7px;
+  color: #4c5870;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.planner-generator textarea {
+  resize: vertical;
+}
+
+.planner-plans,
+.plan-items {
+  display: grid;
+  gap: 16px;
+}
+
+.plan-version.superseded {
+  opacity: 0.72;
+}
+
+.plan-version-heading,
+.plan-item-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.plan-version-heading h2,
+.plan-item-heading h3 {
+  margin: 0;
+}
+
+.plan-version-heading small {
+  display: block;
+  margin-top: 7px;
+  color: #7a869a;
+}
+
+.plan-status {
+  display: inline-flex;
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #526078;
+  background: #edf1f7;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.plan-status.approved {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.plan-status.rejected,
+.plan-status.superseded {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.plan-status.converted,
+.plan-status.partially_converted {
+  color: #1d4ed8;
+  background: #dbeafe;
+}
+
+.plan-instructions {
+  padding: 11px 13px;
+  border-radius: 9px;
+  color: #536078;
+  background: #f5f8fc;
+}
+
+.plan-item {
+  padding: 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+}
+
+.plan-item-heading > div > span {
+  color: #768399;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.plan-item h3 {
+  margin-top: 5px;
+}
+
+.plan-item p {
+  color: #526078;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.plan-review-form {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(180px, 1fr) auto auto;
+  gap: 8px;
+  margin-top: 15px;
+}
+
+.plan-convert-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.draft-link {
+  display: inline-block;
+  margin-top: 13px;
+  color: #1675e7;
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.plan-item details {
+  margin-top: 14px;
+  color: #6f7b90;
+  font-size: 12px;
+}
+
+.plan-history {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #f7f9fc;
+}
+
+.plan-history p {
+  margin: 5px 0;
+  font-size: 11px;
+}
+
+@media (max-width: 950px) {
+  .planner-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .planner-generator {
+    position: static;
+  }
+
+  .plan-review-form {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .planner-page {
+    padding: 24px 16px;
+  }
+
+  .planner-filter,
+  .plan-version-heading,
+  .plan-item-heading,
+  .plan-convert-form {
+    flex-direction: column;
+  }
+
+  .plan-review-form {
+    grid-template-columns: 1fr;
+  }
+}

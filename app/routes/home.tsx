@@ -870,6 +870,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           post_format,
           status,
           title,
+          body,
           scheduled_for,
           image_key,
           image_status
@@ -883,6 +884,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         post_format: string | null;
         status: string;
         title: string | null;
+        body: string;
         scheduled_for: string | null;
         image_key: string | null;
         image_status: string | null;
@@ -904,6 +906,12 @@ export async function action({ request, context }: Route.ActionArgs) {
       if (draft.status !== "draft") {
         return {
           error: "Only drafts can be approved.",
+        };
+      }
+
+      if (!draft.body.trim()) {
+        return {
+          error: "Add post copy before approving this draft.",
         };
       }
 
@@ -1332,6 +1340,7 @@ export default function Home({
           <a href="#employees">Employees</a>
           <a href="#content">Content</a>
           <a href="/calendar">Calendar</a>
+          <a href="/planner">Planner</a>
           <a href="/analytics">Analytics</a>
           <a href="#activity">Activity</a>
           <a href="#add-employee">Add Employee</a>
