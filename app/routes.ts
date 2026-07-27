@@ -6,6 +6,7 @@ import {
 
 export default [
   index("routes/home.tsx"),
+  route("calendar", "routes/calendar.tsx"),
   route(
     "employees/:employeeId",
     "routes/employees.$employeeId.tsx",

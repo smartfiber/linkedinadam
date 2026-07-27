@@ -1,5 +1,9 @@
 import { Form, Link, redirect } from "react-router";
 import type { Route } from "./+types/content.$draftId.edit";
+import {
+  normalizeScheduledFor,
+} from "../lib/contentWorkflow";
+import { findScheduleConflict } from "../lib/contentWorkflow.server";
 
 type AppEnvironment = {
   linkedinadam_db: D1Database;
@@ -97,12 +101,16 @@ export async function action({
 
   const existingDraft = await env.linkedinadam_db
     .prepare(`
-      SELECT id, status
+      SELECT id, status, scheduled_for
       FROM content_drafts
       WHERE id = ?
     `)
     .bind(draftId)
-    .first<{ id: number; status: string }>();
+    .first<{
+      id: number;
+      status: string;
+      scheduled_for: string | null;
+    }>();
 
   if (!existingDraft) {
     throw new Response("Content draft not found", {
@@ -124,9 +132,26 @@ export async function action({
   const postFormat = String(
     formData.get("post_format") ?? "",
   );
-  const scheduledFor = String(
-    formData.get("scheduled_for") ?? "",
+  const scheduleChangedBy = String(
+    formData.get("schedule_changed_by") ?? "",
   ).trim();
+  const scheduleChangeNote = String(
+    formData.get("schedule_change_note") ?? "",
+  ).trim();
+  let scheduledFor;
+
+  try {
+    scheduledFor = normalizeScheduledFor(
+      String(formData.get("scheduled_for") ?? ""),
+    );
+  } catch (error) {
+    return {
+      error:
+        error instanceof Error
+          ? error.message
+          : "Choose a valid schedule date and time.",
+    };
+  }
 
   if (!Number.isInteger(employeeId)) {
     return {
@@ -161,30 +186,75 @@ export async function action({
     };
   }
 
-  await env.linkedinadam_db
+  const scheduleConflict = await findScheduleConflict(
+    env.linkedinadam_db,
+    employeeId,
+    scheduledFor,
+    draftId,
+  );
+
+  if (scheduleConflict) {
+    return {
+      error:
+        `This employee already has “${scheduleConflict.title || "Untitled post"}” scheduled within 30 minutes of that time.`,
+    };
+  }
+
+  const updateDraft = env.linkedinadam_db
     .prepare(`
-      UPDATE content_drafts
-      SET
-        employee_id = ?,
-        title = ?,
-        body = ?,
-        post_format = ?,
-        topic = ?,
-        scheduled_for = ?,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-        AND status = 'draft'
-    `)
+        UPDATE content_drafts
+        SET
+          employee_id = ?,
+          title = ?,
+          body = ?,
+          post_format = ?,
+          topic = ?,
+          scheduled_for = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND status = 'draft'
+      `)
     .bind(
       employeeId,
       title || null,
       body,
       postFormat,
       topic || null,
-      scheduledFor || null,
+      scheduledFor,
       draftId,
-    )
-    .run();
+    );
+
+  if (existingDraft.scheduled_for !== scheduledFor) {
+    if (!scheduleChangedBy) {
+      return {
+        error: "Your name is required when changing the schedule.",
+      };
+    }
+
+    await env.linkedinadam_db.batch([
+      updateDraft,
+      env.linkedinadam_db
+        .prepare(`
+          INSERT INTO content_schedule_history (
+            content_draft_id,
+            previous_scheduled_for,
+            scheduled_for,
+            changed_by,
+            change_note
+          )
+          VALUES (?, ?, ?, ?, ?)
+        `)
+        .bind(
+          draftId,
+          existingDraft.scheduled_for,
+          scheduledFor,
+          scheduleChangedBy,
+          scheduleChangeNote || null,
+        ),
+    ]);
+  } else {
+    await updateDraft.run();
+  }
 
   return redirect("/#content");
 }
@@ -290,6 +360,24 @@ export default function EditContentDraft({
                   defaultValue={formatDateTimeLocal(
                     draft.scheduled_for,
                   )}
+                />
+              </label>
+
+              <label>
+                Schedule changed by
+                <input
+                  name="schedule_changed_by"
+                  type="text"
+                  defaultValue="Adam Copenhaver"
+                />
+              </label>
+
+              <label>
+                Schedule change note
+                <input
+                  name="schedule_change_note"
+                  type="text"
+                  placeholder="Optional reason for the schedule change"
                 />
               </label>
 

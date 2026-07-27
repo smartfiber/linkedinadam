@@ -3,6 +3,11 @@ import type { Route } from "./+types/home";
 import { getSafeOpenAIErrorMessage } from "../lib/aiErrors.server";
 import { generateLinkedInImage } from "../lib/generateLinkedInImage.server";
 import { generateLinkedInPost } from "../lib/generateLinkedInPost.server";
+import {
+  getPublishBlocker,
+  normalizeScheduledFor,
+} from "../lib/contentWorkflow";
+import { findScheduleConflict } from "../lib/contentWorkflow.server";
 
 type Employee = {
   id: number;
@@ -597,9 +602,20 @@ export async function action({ request, context }: Route.ActionArgs) {
     const postFormat = String(
       formData.get("post_format") ?? "original_post",
     );
-    const scheduledFor = String(
-      formData.get("scheduled_for") ?? "",
-    ).trim();
+    let scheduledFor;
+
+    try {
+      scheduledFor = normalizeScheduledFor(
+        String(formData.get("scheduled_for") ?? ""),
+      );
+    } catch (error) {
+      return {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Choose a valid schedule date and time.",
+      };
+    }
 
     if (!Number.isInteger(employeeId)) {
       return {
@@ -622,6 +638,19 @@ export async function action({ request, context }: Route.ActionArgs) {
     if (!env.OPENAI_API_KEY) {
       return {
         error: "The OpenAI API key is not configured.",
+      };
+    }
+
+    const scheduleConflict = await findScheduleConflict(
+      env.linkedinadam_db,
+      employeeId,
+      scheduledFor,
+    );
+
+    if (scheduleConflict) {
+      return {
+        error:
+          `This employee already has “${scheduleConflict.title || "Untitled post"}” scheduled within 30 minutes of that time.`,
       };
     }
 
@@ -719,7 +748,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           generatedPost,
           postFormat,
           topic,
-          scheduledFor || null,
+          scheduledFor,
         )
         .run();
     } catch (error) {
@@ -742,9 +771,20 @@ export async function action({ request, context }: Route.ActionArgs) {
     const postFormat = String(
       formData.get("post_format") ?? "original_post",
     );
-    const scheduledFor = String(
-      formData.get("scheduled_for") ?? "",
-    ).trim();
+    let scheduledFor;
+
+    try {
+      scheduledFor = normalizeScheduledFor(
+        String(formData.get("scheduled_for") ?? ""),
+      );
+    } catch (error) {
+      return {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Choose a valid schedule date and time.",
+      };
+    }
 
     if (!Number.isInteger(employeeId)) {
       return {
@@ -761,6 +801,19 @@ export async function action({ request, context }: Route.ActionArgs) {
     if (!["original_post", "short_post"].includes(postFormat)) {
       return {
         error: "Select a valid post format.",
+      };
+    }
+
+    const scheduleConflict = await findScheduleConflict(
+      env.linkedinadam_db,
+      employeeId,
+      scheduledFor,
+    );
+
+    if (scheduleConflict) {
+      return {
+        error:
+          `This employee already has “${scheduleConflict.title || "Untitled post"}” scheduled within 30 minutes of that time.`,
       };
     }
 
@@ -783,7 +836,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         body,
         postFormat,
         topic || null,
-        scheduledFor || null,
+        scheduledFor,
       )
       .run();
 
@@ -816,7 +869,10 @@ export async function action({ request, context }: Route.ActionArgs) {
           employee_id,
           post_format,
           status,
-          title
+          title,
+          scheduled_for,
+          image_key,
+          image_status
         FROM content_drafts
         WHERE id = ?
       `)
@@ -827,6 +883,9 @@ export async function action({ request, context }: Route.ActionArgs) {
         post_format: string | null;
         status: string;
         title: string | null;
+        scheduled_for: string | null;
+        image_key: string | null;
+        image_status: string | null;
       }>();
 
     if (!draft) {
@@ -924,9 +983,11 @@ export async function action({ request, context }: Route.ActionArgs) {
     }
 
     if (nextStatus === "published") {
-      if (draft.status !== "approved") {
+      const publishBlocker = getPublishBlocker(draft);
+
+      if (publishBlocker) {
         return {
-          error: "A post must be approved before publication.",
+          error: publishBlocker,
         };
       }
 
@@ -1270,6 +1331,7 @@ export default function Home({
           </a>
           <a href="#employees">Employees</a>
           <a href="#content">Content</a>
+          <a href="/calendar">Calendar</a>
           <a href="#activity">Activity</a>
           <a href="#add-employee">Add Employee</a>
           <a href="#agents">Agents</a>

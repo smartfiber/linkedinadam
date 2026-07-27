@@ -1291,3 +1291,253 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+.calendar-page {
+  min-height: 100vh;
+  padding: 42px;
+}
+
+.calendar-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  max-width: 1500px;
+  margin: 0 auto 24px;
+}
+
+.calendar-header .back-link {
+  display: inline-block;
+  margin-bottom: 24px;
+  color: #1675e7;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.calendar-header > div:first-child > p:last-child {
+  max-width: 720px;
+  color: #69758c;
+  line-height: 1.6;
+}
+
+.calendar-summary {
+  display: flex;
+  gap: 10px;
+}
+
+.calendar-summary span {
+  min-width: 105px;
+  padding: 14px;
+  border: 1px solid #dfe5ee;
+  border-radius: 12px;
+  color: #68758a;
+  font-size: 12px;
+  background: white;
+}
+
+.calendar-summary strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #172033;
+  font-size: 24px;
+}
+
+.calendar-page > .form-error,
+.calendar-toolbar,
+.calendar-layout {
+  max-width: 1500px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.calendar-toolbar {
+  display: grid;
+  gap: 16px;
+}
+
+.week-navigation,
+.calendar-filters,
+.calendar-card-actions,
+.calendar-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.week-navigation {
+  justify-content: space-between;
+}
+
+.week-navigation a,
+.calendar-card-actions a {
+  color: #1675e7;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.calendar-filters {
+  flex-wrap: wrap;
+}
+
+.calendar-filters select,
+.schedule-form input {
+  padding: 10px 11px;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+  color: #172033;
+  background: white;
+  font: inherit;
+}
+
+.calendar-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.8fr);
+  gap: 22px;
+}
+
+.calendar-section-heading {
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.calendar-section-heading span {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 999px;
+  color: #1266c8;
+  font-size: 12px;
+  font-weight: 800;
+  background: #e7f1ff;
+}
+
+.calendar-card-list {
+  display: grid;
+  gap: 14px;
+}
+
+.calendar-card {
+  padding: 18px;
+  border: 1px solid #dfe5ee;
+  border-radius: 13px;
+  background: white;
+  box-shadow: 0 8px 25px rgba(24, 37, 62, 0.04);
+}
+
+.calendar-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.calendar-card-heading p,
+.calendar-card-time,
+.calendar-card-topic {
+  margin: 5px 0 0;
+  color: #748096;
+  font-size: 12px;
+}
+
+.calendar-card-time {
+  margin-top: 14px;
+  color: #26334a;
+  font-weight: 800;
+}
+
+.calendar-state {
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.calendar-state.ready {
+  color: #176b45;
+  background: #e8f7ef;
+}
+
+.calendar-state.overdue {
+  color: #9b2c2c;
+  background: #feecec;
+}
+
+.calendar-state.unscheduled,
+.calendar-state.needs_post_approval,
+.calendar-state.needs_image_approval {
+  color: #725a18;
+  background: #fff4c7;
+}
+
+.schedule-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.schedule-form label {
+  display: grid;
+  gap: 6px;
+  color: #4c5870;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.calendar-card-actions {
+  grid-column: 1 / -1;
+}
+
+.schedule-history {
+  margin-top: 14px;
+  color: #566279;
+  font-size: 12px;
+}
+
+.schedule-history summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.schedule-history > div {
+  display: grid;
+  gap: 3px;
+  margin-top: 8px;
+  padding: 9px;
+  border-radius: 8px;
+  background: #f7f9fc;
+}
+
+.schedule-history p {
+  margin: 0;
+}
+
+@media (max-width: 1050px) {
+  .calendar-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 750px) {
+  .calendar-page {
+    padding: 24px 16px;
+  }
+
+  .calendar-header,
+  .week-navigation {
+    flex-direction: column;
+  }
+
+  .schedule-form {
+    grid-template-columns: 1fr;
+  }
+
+  .calendar-card-actions {
+    grid-column: auto;
+  }
+}
