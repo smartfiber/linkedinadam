@@ -24,7 +24,8 @@
   "r2_buckets": [
     {
       "binding": "LINKEDIN_IMAGES",
-      "bucket_name": "linkedinadam-images"
+      "bucket_name": "linkedinadam-images",
+      "remote": true
     }
   ]
 }
