@@ -300,3 +300,76 @@ button.secondary {
     padding: 24px 18px;
   }
 }
+
+.button-link {
+  align-self: flex-start;
+  padding: 12px 18px;
+  border-radius: 9px;
+  color: white;
+  font-weight: 700;
+  text-decoration: none;
+  background: #1675e7;
+}
+
+.employee-form {
+  display: grid;
+  gap: 14px;
+}
+
+.employee-form label {
+  display: grid;
+  gap: 7px;
+  color: #465168;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.employee-form input {
+  width: 100%;
+  padding: 12px 13px;
+  border: 1px solid #dbe2ec;
+  border-radius: 9px;
+  color: #172033;
+  font: inherit;
+  background: #fff;
+}
+
+.employee-form input:focus {
+  border-color: #1675e7;
+  outline: 3px solid rgba(22, 117, 231, 0.12);
+}
+
+.form-error {
+  margin: 0;
+  color: #b42318;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.empty-state {
+  padding: 28px;
+  border: 1px dashed #cad3df;
+  border-radius: 12px;
+  text-align: center;
+  background: #fafbfd;
+}
+
+.empty-state p {
+  margin: 7px 0 0;
+  color: #69758c;
+}
+
+.employee-contact strong,
+.employee-contact span {
+  display: block;
+}
+
+.employee-contact strong {
+  font-size: 13px;
+}
+
+.employee-contact span {
+  margin-top: 4px;
+  color: #8a95a8;
+  font-size: 12px;
+}
