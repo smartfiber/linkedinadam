@@ -39,6 +39,16 @@ type PlaybookOption = {
   role_name: string;
 };
 
+type ActivityEvent = {
+  id: number;
+  employee_name: string;
+  event_type: string;
+  source: string;
+  description: string | null;
+  content_url: string | null;
+  occurred_at: string;
+};
+
 const agents = [
   {
     name: "Strategy Agent",
@@ -138,9 +148,28 @@ export async function loader({ context }: Route.LoaderArgs) {
     `)
     .all<PlaybookOption>();
 
+  const activityQuery = await env.linkedinadam_db
+    .prepare(`
+      SELECT
+        a.id,
+        e.name AS employee_name,
+        a.event_type,
+        a.source,
+        a.description,
+        a.content_url,
+        a.occurred_at
+      FROM activity_events a
+      JOIN employees e
+        ON e.id = a.employee_id
+      ORDER BY a.occurred_at DESC, a.id DESC
+      LIMIT 25
+    `)
+    .all<ActivityEvent>();
+
   return {
     employees: employeeQuery.results ?? [],
     playbooks: playbookQuery.results ?? [],
+    recentActivities: activityQuery.results ?? [],
     weekStart,
   };
 }
@@ -378,6 +407,7 @@ export default function Home({
 }: Route.ComponentProps) {
   const employees = loaderData.employees;
   const playbooks = loaderData.playbooks;
+  const recentActivities = loaderData.recentActivities;
   const weekStart = loaderData.weekStart;
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
@@ -407,6 +437,7 @@ export default function Home({
             Dashboard
           </a>
           <a href="#employees">Employees</a>
+          <a href="#activity">Activity</a>
           <a href="#add-employee">Add Employee</a>
           <a href="#agents">Agents</a>
         </nav>
@@ -875,6 +906,99 @@ export default function Home({
               </div>
             </div>
           </article>
+        </section>
+
+        <section className="panel" id="activity">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">ACTIVITY HISTORY</p>
+              <h2>Recent employee activity</h2>
+            </div>
+
+            <span className="activity-count">
+              {recentActivities.length} recent events
+            </span>
+          </div>
+
+          {recentActivities.length === 0 ? (
+            <div className="empty-state">
+              <strong>No activity has been logged yet.</strong>
+              <p>
+                Completed posts, comments, connections, conversations,
+                and lead handoffs will appear here.
+              </p>
+            </div>
+          ) : (
+            <div className="activity-feed">
+              {recentActivities.map((activity) => {
+                const labels: Record<string, string> = {
+                  original_post: "Original post",
+                  short_post: "Short post",
+                  meaningful_comment: "Meaningful comment",
+                  relevant_connection: "Relevant connection",
+                  qualified_conversation: "Qualified conversation",
+                  lead_handoff: "Lead handed off",
+                };
+
+                const activityLabel =
+                  labels[activity.event_type] ?? activity.event_type;
+
+                const activityDate = new Date(
+                  activity.occurred_at.replace(" ", "T") + "Z",
+                );
+
+                return (
+                  <article className="activity-feed-row" key={activity.id}>
+                    <div className="activity-icon">
+                      {activity.employee_name
+                        .split(" ")
+                        .map((part) => part[0])
+                        .slice(0, 2)
+                        .join("")}
+                    </div>
+
+                    <div className="activity-feed-content">
+                      <div className="activity-feed-title">
+                        <strong>{activity.employee_name}</strong>
+                        <span>{activityLabel}</span>
+                      </div>
+
+                      <p>
+                        {activity.description ||
+                          `${activityLabel} logged without a description.`}
+                      </p>
+
+                      <div className="activity-feed-meta">
+                        <span>
+                          {activityDate.toLocaleString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                            hour: "numeric",
+                            minute: "2-digit",
+                          })}
+                        </span>
+
+                        <span className="activity-source">
+                          Source: {activity.source}
+                        </span>
+
+                        {activity.content_url ? (
+                          <a
+                            href={activity.content_url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open LinkedIn activity ↗
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </section>
 
         <section className="panel" id="agents">

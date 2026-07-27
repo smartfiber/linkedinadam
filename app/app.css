@@ -760,3 +760,108 @@ button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
 }
+
+.activity-count {
+  align-self: flex-start;
+  padding: 7px 10px;
+  border-radius: 999px;
+  color: #526078;
+  background: #eef2f7;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.activity-feed {
+  display: grid;
+}
+
+.activity-feed-row {
+  display: flex;
+  gap: 14px;
+  padding: 17px 0;
+  border-bottom: 1px solid #edf0f5;
+}
+
+.activity-feed-row:first-child {
+  padding-top: 4px;
+}
+
+.activity-feed-row:last-child {
+  padding-bottom: 4px;
+  border-bottom: 0;
+}
+
+.activity-icon {
+  display: grid;
+  flex: 0 0 42px;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 50%;
+  color: #165fae;
+  background: #e8f2ff;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.activity-feed-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.activity-feed-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.activity-feed-title strong {
+  color: #1d2940;
+}
+
+.activity-feed-title span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: #526078;
+  background: #f0f3f7;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.activity-feed-content p {
+  margin: 7px 0;
+  color: #526078;
+  line-height: 1.5;
+}
+
+.activity-feed-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: #8994a7;
+  font-size: 12px;
+}
+
+.activity-feed-meta a {
+  color: #1675e7;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.activity-source {
+  text-transform: capitalize;
+}
+
+@media (max-width: 600px) {
+  .activity-feed-row {
+    align-items: flex-start;
+  }
+
+  .activity-feed-meta {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+}
