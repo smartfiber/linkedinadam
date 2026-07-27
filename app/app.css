@@ -1109,3 +1109,13 @@ button:disabled {
     grid-column: auto;
   }
 }
+
+.approved-actions {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.approved-actions > form:first-child {
+  justify-self: start;
+}

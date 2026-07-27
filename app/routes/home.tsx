@@ -378,6 +378,28 @@ export async function action({ request, context }: Route.ActionArgs) {
       return redirect("/#content");
     }
 
+    if (nextStatus === "draft") {
+      if (draft.status !== "approved") {
+        return {
+          error: "Only approved posts can be returned to draft.",
+        };
+      }
+
+      await env.linkedinadam_db
+        .prepare(`
+          UPDATE content_drafts
+          SET
+            status = 'draft',
+            approved_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `)
+        .bind(draftId)
+        .run();
+
+      return redirect("/#content");
+    }
+
     if (nextStatus === "published") {
       if (draft.status !== "approved") {
         return {
@@ -1235,10 +1257,39 @@ export default function Home({
                     ) : null}
 
                     {draft.status === "approved" ? (
-                      <Form
-                        method="post"
-                        className="publish-form"
-                      >
+                      <div className="approved-actions">
+                        <Form method="post">
+                          <input
+                            type="hidden"
+                            name="intent"
+                            value="update_content_status"
+                          />
+                          <input
+                            type="hidden"
+                            name="draft_id"
+                            value={draft.id}
+                          />
+                          <input
+                            type="hidden"
+                            name="next_status"
+                            value="draft"
+                          />
+
+                          <button
+                            type="submit"
+                            className="secondary"
+                            disabled={isSubmitting}
+                          >
+                            {isSubmitting
+                              ? "Saving..."
+                              : "Return to draft"}
+                          </button>
+                        </Form>
+
+                        <Form
+                          method="post"
+                          className="publish-form"
+                        >
                         <input
                           type="hidden"
                           name="intent"
@@ -1270,7 +1321,8 @@ export default function Home({
                             ? "Saving..."
                             : "Mark published"}
                         </button>
-                      </Form>
+                        </Form>
+                      </div>
                     ) : null}
 
                     {draft.status === "published" &&
