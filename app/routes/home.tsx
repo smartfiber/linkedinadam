@@ -1197,7 +1197,15 @@ export default function Home({
                     ) : null}
 
                     {draft.status === "draft" ? (
-                      <Form method="post">
+                      <div className="draft-actions">
+                        <a
+                          className="edit-draft-link"
+                          href={`/content/${draft.id}/edit`}
+                        >
+                          Edit draft
+                        </a>
+
+                        <Form method="post">
                         <input
                           type="hidden"
                           name="intent"
@@ -1222,7 +1230,8 @@ export default function Home({
                             ? "Saving..."
                             : "Approve post"}
                         </button>
-                      </Form>
+                        </Form>
+                      </div>
                     ) : null}
 
                     {draft.status === "approved" ? (

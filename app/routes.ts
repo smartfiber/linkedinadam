@@ -10,4 +10,8 @@ export default [
     "employees/:employeeId",
     "routes/employees.$employeeId.tsx",
   ),
+  route(
+    "content/:draftId/edit",
+    "routes/content.$draftId.edit.tsx",
+  ),
 ] satisfies RouteConfig;
