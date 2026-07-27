@@ -39,6 +39,22 @@ type PlaybookOption = {
   role_name: string;
 };
 
+type ContentDraft = {
+  id: number;
+  employee_id: number;
+  employee_name: string;
+  title: string | null;
+  body: string;
+  post_format: string | null;
+  topic: string | null;
+  status: string;
+  scheduled_for: string | null;
+  approved_at: string | null;
+  published_at: string | null;
+  linkedin_post_url: string | null;
+  created_at: string;
+};
+
 type ActivityEvent = {
   id: number;
   employee_name: string;
@@ -182,6 +198,37 @@ export async function loader({ context }: Route.LoaderArgs) {
     `)
     .all<PlaybookOption>();
 
+  const contentQuery = await env.linkedinadam_db
+    .prepare(`
+      SELECT
+        c.id,
+        c.employee_id,
+        e.name AS employee_name,
+        c.title,
+        c.body,
+        c.post_format,
+        c.topic,
+        c.status,
+        c.scheduled_for,
+        c.approved_at,
+        c.published_at,
+        c.linkedin_post_url,
+        c.created_at
+      FROM content_drafts c
+      JOIN employees e
+        ON e.id = c.employee_id
+      ORDER BY
+        CASE c.status
+          WHEN 'approved' THEN 1
+          WHEN 'draft' THEN 2
+          WHEN 'published' THEN 3
+          ELSE 4
+        END,
+        c.created_at DESC
+      LIMIT 30
+    `)
+    .all<ContentDraft>();
+
   const activityQuery = await env.linkedinadam_db
     .prepare(`
       SELECT
@@ -204,6 +251,7 @@ export async function loader({ context }: Route.LoaderArgs) {
     employees: employeeQuery.results ?? [],
     playbooks: playbookQuery.results ?? [],
     recentActivities: activityQuery.results ?? [],
+    contentDrafts: contentQuery.results ?? [],
     weekStart,
   };
 }
@@ -212,6 +260,192 @@ export async function action({ request, context }: Route.ActionArgs) {
   const env = context.cloudflare.env as unknown as AppEnvironment;
   const formData = await request.formData();
   const intent = String(formData.get("intent") ?? "add_employee");
+
+  if (intent === "create_content_draft") {
+    const employeeId = Number(formData.get("employee_id"));
+    const title = String(formData.get("title") ?? "").trim();
+    const body = String(formData.get("body") ?? "").trim();
+    const topic = String(formData.get("topic") ?? "").trim();
+    const postFormat = String(
+      formData.get("post_format") ?? "original_post",
+    );
+    const scheduledFor = String(
+      formData.get("scheduled_for") ?? "",
+    ).trim();
+
+    if (!Number.isInteger(employeeId)) {
+      return {
+        error: "Select a valid employee.",
+      };
+    }
+
+    if (!body) {
+      return {
+        error: "Post content is required.",
+      };
+    }
+
+    if (!["original_post", "short_post"].includes(postFormat)) {
+      return {
+        error: "Select a valid post format.",
+      };
+    }
+
+    await env.linkedinadam_db
+      .prepare(`
+        INSERT INTO content_drafts (
+          employee_id,
+          title,
+          body,
+          post_format,
+          topic,
+          scheduled_for,
+          status
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'draft')
+      `)
+      .bind(
+        employeeId,
+        title || null,
+        body,
+        postFormat,
+        topic || null,
+        scheduledFor || null,
+      )
+      .run();
+
+    return redirect("/#content");
+  }
+
+  if (intent === "update_content_status") {
+    const draftId = Number(formData.get("draft_id"));
+    const nextStatus = String(formData.get("next_status") ?? "");
+    const linkedinPostUrl = String(
+      formData.get("linkedin_post_url") ?? "",
+    ).trim();
+
+    if (!Number.isInteger(draftId)) {
+      return {
+        error: "A valid content draft is required.",
+      };
+    }
+
+    const draft = await env.linkedinadam_db
+      .prepare(`
+        SELECT
+          id,
+          employee_id,
+          post_format,
+          status,
+          title
+        FROM content_drafts
+        WHERE id = ?
+      `)
+      .bind(draftId)
+      .first<{
+        id: number;
+        employee_id: number;
+        post_format: string | null;
+        status: string;
+        title: string | null;
+      }>();
+
+    if (!draft) {
+      return {
+        error: "The content draft could not be found.",
+      };
+    }
+
+    if (nextStatus === "approved") {
+      if (draft.status !== "draft") {
+        return {
+          error: "Only drafts can be approved.",
+        };
+      }
+
+      await env.linkedinadam_db
+        .prepare(`
+          UPDATE content_drafts
+          SET
+            status = 'approved',
+            approved_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `)
+        .bind(draftId)
+        .run();
+
+      return redirect("/#content");
+    }
+
+    if (nextStatus === "published") {
+      if (draft.status !== "approved") {
+        return {
+          error: "A post must be approved before publication.",
+        };
+      }
+
+      if (!linkedinPostUrl) {
+        return {
+          error: "Add the published LinkedIn URL before marking it published.",
+        };
+      }
+
+      const eventType =
+        draft.post_format === "short_post"
+          ? "short_post"
+          : "original_post";
+
+      await env.linkedinadam_db.batch([
+        env.linkedinadam_db
+          .prepare(`
+            UPDATE content_drafts
+            SET
+              status = 'published',
+              published_at = CURRENT_TIMESTAMP,
+              linkedin_post_url = ?,
+              updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `)
+          .bind(linkedinPostUrl, draftId),
+
+        env.linkedinadam_db
+          .prepare(`
+            INSERT OR IGNORE INTO activity_events (
+              employee_id,
+              event_type,
+              source,
+              external_action_id,
+              content_url,
+              description,
+              occurred_at
+            )
+            VALUES (
+              ?,
+              ?,
+              'linkedinadam',
+              ?,
+              ?,
+              ?,
+              CURRENT_TIMESTAMP
+            )
+          `)
+          .bind(
+            draft.employee_id,
+            eventType,
+            `content_draft:${draft.id}`,
+            linkedinPostUrl,
+            draft.title || "Published through LinkedInAdam",
+          ),
+      ]);
+
+      return redirect("/#content");
+    }
+
+    return {
+      error: "Select a valid content status.",
+    };
+  }
 
   if (intent === "log_activity") {
     const employeeId = Number(formData.get("employee_id"));
@@ -442,6 +676,7 @@ export default function Home({
   const employees = loaderData.employees;
   const playbooks = loaderData.playbooks;
   const recentActivities = loaderData.recentActivities;
+  const contentDrafts = loaderData.contentDrafts;
   const weekStart = loaderData.weekStart;
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
@@ -471,6 +706,7 @@ export default function Home({
             Dashboard
           </a>
           <a href="#employees">Employees</a>
+          <a href="#content">Content</a>
           <a href="#activity">Activity</a>
           <a href="#add-employee">Add Employee</a>
           <a href="#agents">Agents</a>
@@ -826,6 +1062,224 @@ export default function Home({
               </div>
             </div>
           </article>
+        </section>
+
+        <section className="panel" id="content">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">CONTENT WORKFLOW</p>
+              <h2>Post draft queue</h2>
+            </div>
+
+            <span className="activity-count">
+              {contentDrafts.length} drafts
+            </span>
+          </div>
+
+          <div className="content-workflow-grid">
+            <Form method="post" className="content-draft-form">
+              <input
+                type="hidden"
+                name="intent"
+                value="create_content_draft"
+              />
+
+              <label>
+                Employee
+                <select name="employee_id" defaultValue="" required>
+                  <option value="" disabled>
+                    Select an employee
+                  </option>
+
+                  {employees.map((employee) => (
+                    <option key={employee.id} value={employee.id}>
+                      {employee.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Post format
+                <select
+                  name="post_format"
+                  defaultValue="original_post"
+                >
+                  <option value="original_post">
+                    Original post
+                  </option>
+                  <option value="short_post">
+                    Short post
+                  </option>
+                </select>
+              </label>
+
+              <label>
+                Internal title
+                <input
+                  name="title"
+                  type="text"
+                  placeholder="Telecom renewal timing"
+                />
+              </label>
+
+              <label>
+                Topic
+                <input
+                  name="topic"
+                  type="text"
+                  placeholder="Procurement, outages, store openings..."
+                />
+              </label>
+
+              <label>
+                Schedule
+                <input
+                  name="scheduled_for"
+                  type="datetime-local"
+                />
+              </label>
+
+              <label className="content-body-field">
+                Post content
+                <textarea
+                  name="body"
+                  rows={10}
+                  placeholder="Write or paste the LinkedIn post here..."
+                  required
+                />
+              </label>
+
+              <button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Saving..." : "Create draft"}
+              </button>
+            </Form>
+
+            <div className="draft-queue">
+              {contentDrafts.length === 0 ? (
+                <div className="empty-state">
+                  <strong>No drafts yet.</strong>
+                  <p>Create the first employee post draft.</p>
+                </div>
+              ) : (
+                contentDrafts.map((draft) => (
+                  <article className="draft-card" key={draft.id}>
+                    <div className="draft-card-header">
+                      <div>
+                        <strong>
+                          {draft.title || "Untitled post"}
+                        </strong>
+                        <p>
+                          {draft.employee_name} ·{" "}
+                          {draft.post_format === "short_post"
+                            ? "Short post"
+                            : "Original post"}
+                        </p>
+                      </div>
+
+                      <span className={`draft-status ${draft.status}`}>
+                        {draft.status}
+                      </span>
+                    </div>
+
+                    {draft.topic ? (
+                      <span className="draft-topic">
+                        {draft.topic}
+                      </span>
+                    ) : null}
+
+                    <p className="draft-body">{draft.body}</p>
+
+                    {draft.scheduled_for ? (
+                      <p className="draft-schedule">
+                        Scheduled: {draft.scheduled_for}
+                      </p>
+                    ) : null}
+
+                    {draft.status === "draft" ? (
+                      <Form method="post">
+                        <input
+                          type="hidden"
+                          name="intent"
+                          value="update_content_status"
+                        />
+                        <input
+                          type="hidden"
+                          name="draft_id"
+                          value={draft.id}
+                        />
+                        <input
+                          type="hidden"
+                          name="next_status"
+                          value="approved"
+                        />
+
+                        <button
+                          type="submit"
+                          disabled={isSubmitting}
+                        >
+                          {isSubmitting
+                            ? "Saving..."
+                            : "Approve post"}
+                        </button>
+                      </Form>
+                    ) : null}
+
+                    {draft.status === "approved" ? (
+                      <Form
+                        method="post"
+                        className="publish-form"
+                      >
+                        <input
+                          type="hidden"
+                          name="intent"
+                          value="update_content_status"
+                        />
+                        <input
+                          type="hidden"
+                          name="draft_id"
+                          value={draft.id}
+                        />
+                        <input
+                          type="hidden"
+                          name="next_status"
+                          value="published"
+                        />
+
+                        <input
+                          type="url"
+                          name="linkedin_post_url"
+                          placeholder="Published LinkedIn URL"
+                          required
+                        />
+
+                        <button
+                          type="submit"
+                          disabled={isSubmitting}
+                        >
+                          {isSubmitting
+                            ? "Saving..."
+                            : "Mark published"}
+                        </button>
+                      </Form>
+                    ) : null}
+
+                    {draft.status === "published" &&
+                    draft.linkedin_post_url ? (
+                      <a
+                        className="published-link"
+                        href={draft.linkedin_post_url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open published post ↗
+                      </a>
+                    ) : null}
+                  </article>
+                ))
+              )}
+            </div>
+          </div>
         </section>
 
         <section className="panel" id="activity">

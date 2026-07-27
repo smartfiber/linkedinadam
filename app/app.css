@@ -865,3 +865,157 @@ button:disabled {
     gap: 5px;
   }
 }
+
+.content-workflow-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(360px, 1.2fr);
+  gap: 20px;
+}
+
+.content-draft-form {
+  display: grid;
+  align-content: start;
+  gap: 13px;
+  padding: 18px;
+  border: 1px solid #e0e6ef;
+  border-radius: 12px;
+  background: #f8fafd;
+}
+
+.content-draft-form label {
+  display: grid;
+  gap: 6px;
+  color: #4c5870;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.content-draft-form input,
+.content-draft-form select,
+.content-draft-form textarea,
+.publish-form input {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+  color: #172033;
+  font: inherit;
+  background: white;
+}
+
+.content-draft-form textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.content-draft-form input:focus,
+.content-draft-form select:focus,
+.content-draft-form textarea:focus,
+.publish-form input:focus {
+  border-color: #1675e7;
+  outline: 3px solid rgba(22, 117, 231, 0.12);
+}
+
+.draft-queue {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.draft-card {
+  padding: 18px;
+  border: 1px solid #e0e6ef;
+  border-radius: 12px;
+  background: white;
+}
+
+.draft-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+}
+
+.draft-card-header strong {
+  color: #1d2940;
+  font-size: 16px;
+}
+
+.draft-card-header p {
+  margin: 5px 0 0;
+  color: #7c889b;
+  font-size: 12px;
+}
+
+.draft-status {
+  align-self: flex-start;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: capitalize;
+}
+
+.draft-status.draft {
+  color: #6b5b17;
+  background: #fff4c7;
+}
+
+.draft-status.approved {
+  color: #165fae;
+  background: #e8f2ff;
+}
+
+.draft-status.published {
+  color: #176b45;
+  background: #e8f7ef;
+}
+
+.draft-topic {
+  display: inline-block;
+  margin-top: 12px;
+  color: #526078;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.draft-body {
+  max-height: 220px;
+  margin: 13px 0;
+  overflow: auto;
+  color: #3f4b61;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.draft-schedule {
+  color: #7c889b;
+  font-size: 12px;
+}
+
+.publish-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.published-link {
+  display: inline-block;
+  margin-top: 12px;
+  color: #1675e7;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+@media (max-width: 950px) {
+  .content-workflow-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .publish-form {
+    grid-template-columns: 1fr;
+  }
+}
