@@ -28,6 +28,11 @@ type AppEnvironment = {
   linkedinadam_db: D1Database;
 };
 
+type PlaybookOption = {
+  id: number;
+  role_name: string;
+};
+
 const agents = [
   {
     name: "Strategy Agent",
@@ -98,8 +103,17 @@ export async function loader({ context }: Route.LoaderArgs) {
     `)
     .all<Employee>();
 
+  const playbookQuery = await env.linkedinadam_db
+    .prepare(`
+      SELECT id, role_name
+      FROM playbooks
+      ORDER BY role_name ASC
+    `)
+    .all<PlaybookOption>();
+
   return {
     employees: employeeQuery.results ?? [],
+    playbooks: playbookQuery.results ?? [],
   };
 }
 
@@ -112,26 +126,66 @@ export async function action({ request, context }: Route.ActionArgs) {
   const linkedinProfileUrl = String(
     formData.get("linkedin_profile_url") ?? "",
   ).trim();
-  const roleName = String(formData.get("role_name") ?? "").trim();
+  const playbookId = Number(formData.get("playbook_id"));
 
-  if (!name || !roleName) {
+  if (!name) {
     return {
-      error: "Employee name and role are required.",
+      error: "Employee name is required.",
     };
   }
 
-  await env.linkedinadam_db
+  if (!Number.isInteger(playbookId)) {
+    return {
+      error: "Select a valid playbook.",
+    };
+  }
+
+  const selectedPlaybook = await env.linkedinadam_db
+    .prepare(`
+      SELECT id, role_name
+      FROM playbooks
+      WHERE id = ?
+    `)
+    .bind(playbookId)
+    .first<{ id: number; role_name: string }>();
+
+  if (!selectedPlaybook) {
+    return {
+      error: "The selected playbook could not be found.",
+    };
+  }
+
+  const employeeInsert = await env.linkedinadam_db
     .prepare(`
       INSERT INTO employees
         (name, email, linkedin_profile_url, role_name)
       VALUES (?, ?, ?, ?)
+      RETURNING id
     `)
     .bind(
       name,
       email || null,
       linkedinProfileUrl || null,
-      roleName,
+      selectedPlaybook.role_name,
     )
+    .first<{ id: number }>();
+
+  if (!employeeInsert) {
+    return {
+      error: "The employee could not be created.",
+    };
+  }
+
+  await env.linkedinadam_db
+    .prepare(`
+      INSERT INTO employee_playbooks (
+        employee_id,
+        playbook_id,
+        assigned_at
+      )
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+    `)
+    .bind(employeeInsert.id, playbookId)
     .run();
 
   return redirect("/#employees");
@@ -142,6 +196,7 @@ export default function Home({
   actionData,
 }: Route.ComponentProps) {
   const employees = loaderData.employees;
+  const playbooks = loaderData.playbooks;
 
   const totalOriginalPosts = employees.reduce(
     (total, employee) => total + employee.weekly_original_posts,
@@ -364,13 +419,18 @@ export default function Home({
               </label>
 
               <label>
-                Role
-                <input
-                  name="role_name"
-                  type="text"
-                  placeholder="Founder / Managing Partner"
-                  required
-                />
+                Assigned playbook
+                <select name="playbook_id" defaultValue="" required>
+                  <option value="" disabled>
+                    Select a playbook
+                  </option>
+
+                  {playbooks.map((playbook) => (
+                    <option key={playbook.id} value={playbook.id}>
+                      {playbook.role_name}
+                    </option>
+                  ))}
+                </select>
               </label>
 
               <label>
