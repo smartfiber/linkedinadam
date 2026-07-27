@@ -1,5 +1,6 @@
 import { Form, redirect, useNavigation } from "react-router";
 import type { Route } from "./+types/home";
+import { generateLinkedInImage } from "../lib/generateLinkedInImage.server";
 
 type Employee = {
   id: number;
@@ -32,6 +33,8 @@ type Employee = {
 
 type AppEnvironment = {
   linkedinadam_db: D1Database;
+  OPENAI_API_KEY: string;
+  LINKEDIN_IMAGES: R2Bucket;
 };
 
 type PlaybookOption = {
@@ -52,6 +55,11 @@ type ContentDraft = {
   approved_at: string | null;
   published_at: string | null;
   linkedin_post_url: string | null;
+  image_key: string | null;
+  image_prompt: string | null;
+  image_status: string | null;
+  image_mime_type: string | null;
+  image_updated_at: string | null;
   created_at: string;
 };
 
@@ -223,6 +231,11 @@ export async function loader({ context }: Route.LoaderArgs) {
         c.approved_at,
         c.published_at,
         c.linkedin_post_url,
+        c.image_key,
+        c.image_prompt,
+        c.image_status,
+        c.image_mime_type,
+        c.image_updated_at,
         c.created_at
       FROM content_drafts c
       JOIN employees e
@@ -287,6 +300,221 @@ export async function action({ request, context }: Route.ActionArgs) {
   const env = context.cloudflare.env as unknown as AppEnvironment;
   const formData = await request.formData();
   const intent = String(formData.get("intent") ?? "add_employee");
+
+  if (intent === "generate_content_image") {
+    const draftId = Number(formData.get("draft_id"));
+    const style = String(
+      formData.get("image_style") ?? "editorial",
+    );
+    const customInstructions = String(
+      formData.get("custom_instructions") ?? "",
+    ).trim();
+
+    const allowedStyles = [
+      "editorial",
+      "branded",
+      "photorealistic",
+      "diagram",
+    ];
+
+    if (!Number.isInteger(draftId)) {
+      return {
+        error: "Select a valid content draft.",
+      };
+    }
+
+    if (!allowedStyles.includes(style)) {
+      return {
+        error: "Select a valid image style.",
+      };
+    }
+
+    if (!env.OPENAI_API_KEY) {
+      return {
+        error: "The OpenAI API key is not configured.",
+      };
+    }
+
+    const draft = await env.linkedinadam_db
+      .prepare(`
+        SELECT
+          c.id,
+          c.title,
+          c.topic,
+          c.body,
+          c.image_key,
+          e.name AS employee_name,
+          e.role_name
+        FROM content_drafts c
+        JOIN employees e
+          ON e.id = c.employee_id
+        WHERE c.id = ?
+      `)
+      .bind(draftId)
+      .first<{
+        id: number;
+        title: string | null;
+        topic: string | null;
+        body: string;
+        image_key: string | null;
+        employee_name: string;
+        role_name: string;
+      }>();
+
+    if (!draft) {
+      return {
+        error: "The content draft could not be found.",
+      };
+    }
+
+    try {
+      const generated = await generateLinkedInImage({
+        apiKey: env.OPENAI_API_KEY,
+        employeeName: draft.employee_name,
+        roleName: draft.role_name,
+        topic: draft.topic || draft.title,
+        postBody: draft.body,
+        style: style as
+          | "editorial"
+          | "branded"
+          | "photorealistic"
+          | "diagram",
+        customInstructions: customInstructions || null,
+      });
+
+      const imageKey =
+        `content-drafts/${draftId}/${crypto.randomUUID()}.png`;
+
+      await env.LINKEDIN_IMAGES.put(
+        imageKey,
+        generated.bytes,
+        {
+          httpMetadata: {
+            contentType: generated.mimeType,
+          },
+          customMetadata: {
+            draftId: String(draftId),
+            employeeName: draft.employee_name,
+          },
+        },
+      );
+
+      await env.linkedinadam_db
+        .prepare(`
+          UPDATE content_drafts
+          SET
+            image_key = ?,
+            image_prompt = ?,
+            image_status = 'generated',
+            image_mime_type = ?,
+            image_updated_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `)
+        .bind(
+          imageKey,
+          generated.prompt,
+          generated.mimeType,
+          draftId,
+        )
+        .run();
+
+      if (draft.image_key && draft.image_key !== imageKey) {
+        await env.LINKEDIN_IMAGES.delete(draft.image_key);
+      }
+
+      return redirect("/#content");
+    } catch (error) {
+      console.error("Image generation failed:", error);
+
+      return {
+        error:
+          error instanceof Error
+            ? `Image generation failed: ${error.message}`
+            : "Image generation failed.",
+      };
+    }
+  }
+
+  if (intent === "approve_content_image") {
+    const draftId = Number(formData.get("draft_id"));
+
+    if (!Number.isInteger(draftId)) {
+      return {
+        error: "Select a valid content draft.",
+      };
+    }
+
+    const result = await env.linkedinadam_db
+      .prepare(`
+        UPDATE content_drafts
+        SET
+          image_status = 'approved',
+          image_updated_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND image_key IS NOT NULL
+          AND image_status = 'generated'
+      `)
+      .bind(draftId)
+      .run();
+
+    if (!result.meta.changes) {
+      return {
+        error: "Only a generated image can be approved.",
+      };
+    }
+
+    return redirect("/#content");
+  }
+
+  if (intent === "remove_content_image") {
+    const draftId = Number(formData.get("draft_id"));
+
+    if (!Number.isInteger(draftId)) {
+      return {
+        error: "Select a valid content draft.",
+      };
+    }
+
+    const draft = await env.linkedinadam_db
+      .prepare(`
+        SELECT image_key
+        FROM content_drafts
+        WHERE id = ?
+      `)
+      .bind(draftId)
+      .first<{
+        image_key: string | null;
+      }>();
+
+    if (!draft) {
+      return {
+        error: "The content draft could not be found.",
+      };
+    }
+
+    await env.linkedinadam_db
+      .prepare(`
+        UPDATE content_drafts
+        SET
+          image_key = NULL,
+          image_prompt = NULL,
+          image_status = NULL,
+          image_mime_type = NULL,
+          image_updated_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `)
+      .bind(draftId)
+      .run();
+
+    if (draft.image_key) {
+      await env.LINKEDIN_IMAGES.delete(draft.image_key);
+    }
+
+    return redirect("/#content");
+  }
 
   if (intent === "create_content_draft") {
     const employeeId = Number(formData.get("employee_id"));
@@ -1193,6 +1421,12 @@ export default function Home({
             </span>
           </div>
 
+          {actionData?.error ? (
+            <p className="form-error content-workflow-error">
+              {actionData.error}
+            </p>
+          ) : null}
+
           <div className="content-workflow-grid">
             <Form method="post" className="content-draft-form">
               <input
@@ -1312,6 +1546,155 @@ export default function Home({
                         Scheduled: {draft.scheduled_for}
                       </p>
                     ) : null}
+
+                    <section className="draft-image-workflow">
+                      <div className="draft-image-heading">
+                        <div>
+                          <span className="eyebrow">
+                            POST IMAGE
+                          </span>
+                          <strong>
+                            {draft.image_key
+                              ? "Generated visual"
+                              : "No image generated"}
+                          </strong>
+                        </div>
+
+                        {draft.image_status ? (
+                          <span
+                            className={`image-status ${draft.image_status}`}
+                          >
+                            {draft.image_status}
+                          </span>
+                        ) : null}
+                      </div>
+
+                      {draft.image_key ? (
+                        <img
+                          className="draft-generated-image"
+                          src={`/images/generated/${encodeURIComponent(
+                            draft.image_key,
+                          )}`}
+                          alt={
+                            draft.title
+                              ? `Generated visual for ${draft.title}`
+                              : "Generated LinkedIn post visual"
+                          }
+                          loading="lazy"
+                        />
+                      ) : null}
+
+                      {draft.status !== "published" ? (
+                        <Form
+                          method="post"
+                          className="image-generation-form"
+                        >
+                          <input
+                            type="hidden"
+                            name="intent"
+                            value="generate_content_image"
+                          />
+
+                          <input
+                            type="hidden"
+                            name="draft_id"
+                            value={draft.id}
+                          />
+
+                          <label>
+                            Image style
+                            <select
+                              name="image_style"
+                              defaultValue="editorial"
+                            >
+                              <option value="editorial">
+                                Editorial illustration
+                              </option>
+                              <option value="branded">
+                                Branded technology graphic
+                              </option>
+                              <option value="photorealistic">
+                                Photorealistic
+                              </option>
+                              <option value="diagram">
+                                Conceptual diagram
+                              </option>
+                            </select>
+                          </label>
+
+                          <label>
+                            Custom instructions
+                            <input
+                              type="text"
+                              name="custom_instructions"
+                              placeholder="Optional visual direction"
+                            />
+                          </label>
+
+                          <button
+                            type="submit"
+                            disabled={isSubmitting}
+                          >
+                            {isSubmitting
+                              ? "Generating..."
+                              : draft.image_key
+                                ? "Regenerate image"
+                                : "Generate image"}
+                          </button>
+                        </Form>
+                      ) : null}
+
+                      {draft.image_key ? (
+                        <div className="image-review-actions">
+                          {draft.image_status === "generated" ? (
+                            <Form method="post">
+                              <input
+                                type="hidden"
+                                name="intent"
+                                value="approve_content_image"
+                              />
+
+                              <input
+                                type="hidden"
+                                name="draft_id"
+                                value={draft.id}
+                              />
+
+                              <button
+                                type="submit"
+                                disabled={isSubmitting}
+                              >
+                                Approve image
+                              </button>
+                            </Form>
+                          ) : null}
+
+                          {draft.status !== "published" ? (
+                            <Form method="post">
+                              <input
+                                type="hidden"
+                                name="intent"
+                                value="remove_content_image"
+                              />
+
+                              <input
+                                type="hidden"
+                                name="draft_id"
+                                value={draft.id}
+                              />
+
+                              <button
+                                type="submit"
+                                className="secondary"
+                                disabled={isSubmitting}
+                              >
+                                Remove image
+                              </button>
+                            </Form>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </section>
 
                     {draft.status === "draft" ? (
                       <div className="draft-actions">

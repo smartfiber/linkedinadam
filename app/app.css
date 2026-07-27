@@ -1195,3 +1195,99 @@ button:disabled {
 .publish-form {
   grid-template-columns: 1fr;
 }
+
+.content-workflow-error {
+  margin: 0 0 18px;
+}
+
+.draft-image-workflow {
+  display: grid;
+  gap: 14px;
+  margin: 18px 0;
+  padding: 16px;
+  border: 1px solid #dfe6f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.draft-image-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.draft-image-heading > div {
+  display: grid;
+  gap: 3px;
+}
+
+.image-status {
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.image-status.generated {
+  color: #805300;
+  background: #fff0c2;
+}
+
+.image-status.approved {
+  color: #12633c;
+  background: #dff7e9;
+}
+
+.draft-generated-image {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  object-fit: cover;
+  border-radius: 10px;
+  background: #e8edf4;
+}
+
+.image-generation-form {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.55fr) minmax(240px, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.image-generation-form label {
+  display: grid;
+  gap: 6px;
+  color: #536078;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.image-generation-form input,
+.image-generation-form select {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 10px;
+  border: 1px solid #d4dde9;
+  border-radius: 8px;
+  color: #172033;
+  background: white;
+  font: inherit;
+}
+
+.image-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.image-review-actions form {
+  margin: 0;
+}
+
+@media (max-width: 800px) {
+  .image-generation-form {
+    grid-template-columns: 1fr;
+  }
+}
