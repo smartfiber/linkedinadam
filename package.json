@@ -15,6 +15,7 @@
 	},
 	"dependencies": {
 		"isbot": "5.1.32",
+		"openai": "^6.49.0",
 		"react": "19.2.1",
 		"react-dom": "19.2.1",
 		"react-router": "7.9.6"
