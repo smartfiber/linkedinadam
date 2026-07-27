@@ -33,7 +33,17 @@ export default {
         });
       }
 
-      const image = await env.LINKEDIN_IMAGES.get(key);
+      let image: R2ObjectBody | null;
+
+      try {
+        image = await env.LINKEDIN_IMAGES.get(key);
+      } catch (error) {
+        console.error("Generated image lookup failed.", error);
+
+        return new Response("Image storage is temporarily unavailable.", {
+          status: 503,
+        });
+      }
 
       if (!image || !("body" in image)) {
         return new Response("Image not found.", {
@@ -47,7 +57,7 @@ export default {
       headers.set("etag", image.httpEtag);
       headers.set(
         "cache-control",
-        "public, max-age=3600, stale-while-revalidate=86400",
+        "private, max-age=3600",
       );
       headers.set("x-content-type-options", "nosniff");
 

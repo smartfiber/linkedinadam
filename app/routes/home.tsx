@@ -1,6 +1,8 @@
 import { Form, redirect, useNavigation } from "react-router";
 import type { Route } from "./+types/home";
+import { getSafeOpenAIErrorMessage } from "../lib/aiErrors.server";
 import { generateLinkedInImage } from "../lib/generateLinkedInImage.server";
+import { generateLinkedInPost } from "../lib/generateLinkedInPost.server";
 
 type Employee = {
   id: number;
@@ -33,7 +35,7 @@ type Employee = {
 
 type AppEnvironment = {
   linkedinadam_db: D1Database;
-  OPENAI_API_KEY: string;
+  OPENAI_API_KEY?: string;
   LINKEDIN_IMAGES: R2Bucket;
 };
 
@@ -335,31 +337,41 @@ export async function action({ request, context }: Route.ActionArgs) {
       };
     }
 
-    const draft = await env.linkedinadam_db
-      .prepare(`
-        SELECT
-          c.id,
-          c.title,
-          c.topic,
-          c.body,
-          c.image_key,
-          e.name AS employee_name,
-          e.role_name
-        FROM content_drafts c
-        JOIN employees e
-          ON e.id = c.employee_id
-        WHERE c.id = ?
-      `)
-      .bind(draftId)
-      .first<{
-        id: number;
-        title: string | null;
-        topic: string | null;
-        body: string;
-        image_key: string | null;
-        employee_name: string;
-        role_name: string;
-      }>();
+    let draft;
+
+    try {
+      draft = await env.linkedinadam_db
+        .prepare(`
+          SELECT
+            c.id,
+            c.title,
+            c.topic,
+            c.body,
+            c.image_key,
+            e.name AS employee_name,
+            e.role_name
+          FROM content_drafts c
+          JOIN employees e
+            ON e.id = c.employee_id
+          WHERE c.id = ?
+        `)
+        .bind(draftId)
+        .first<{
+          id: number;
+          title: string | null;
+          topic: string | null;
+          body: string;
+          image_key: string | null;
+          employee_name: string;
+          role_name: string;
+        }>();
+    } catch (error) {
+      console.error("Content draft lookup failed.", error);
+
+      return {
+        error: "The content draft could not be loaded from the database.",
+      };
+    }
 
     if (!draft) {
       return {
@@ -367,8 +379,10 @@ export async function action({ request, context }: Route.ActionArgs) {
       };
     }
 
+    let generated;
+
     try {
-      const generated = await generateLinkedInImage({
+      generated = await generateLinkedInImage({
         apiKey: env.OPENAI_API_KEY,
         employeeName: draft.employee_name,
         roleName: draft.role_name,
@@ -381,10 +395,18 @@ export async function action({ request, context }: Route.ActionArgs) {
           | "diagram",
         customInstructions: customInstructions || null,
       });
+    } catch (error) {
+      console.error("OpenAI image generation failed.", error);
 
-      const imageKey =
-        `content-drafts/${draftId}/${crypto.randomUUID()}.png`;
+      return {
+        error: getSafeOpenAIErrorMessage(error, "image"),
+      };
+    }
 
+    const imageKey =
+      `content-drafts/${draftId}/${crypto.randomUUID()}.png`;
+
+    try {
       await env.LINKEDIN_IMAGES.put(
         imageKey,
         generated.bytes,
@@ -398,7 +420,16 @@ export async function action({ request, context }: Route.ActionArgs) {
           },
         },
       );
+    } catch (error) {
+      console.error("Generated image upload failed.", error);
 
+      return {
+        error:
+          "The image was generated, but it could not be saved to image storage. Try again.",
+      };
+    }
+
+    try {
       await env.linkedinadam_db
         .prepare(`
           UPDATE content_drafts
@@ -418,22 +449,33 @@ export async function action({ request, context }: Route.ActionArgs) {
           draftId,
         )
         .run();
-
-      if (draft.image_key && draft.image_key !== imageKey) {
-        await env.LINKEDIN_IMAGES.delete(draft.image_key);
-      }
-
-      return redirect("/#content");
     } catch (error) {
-      console.error("Image generation failed:", error);
+      console.error("Generated image database update failed.", error);
+
+      try {
+        await env.LINKEDIN_IMAGES.delete(imageKey);
+      } catch (cleanupError) {
+        console.error(
+          "Generated image cleanup after database failure failed.",
+          cleanupError,
+        );
+      }
 
       return {
         error:
-          error instanceof Error
-            ? `Image generation failed: ${error.message}`
-            : "Image generation failed.",
+          "The image was saved, but the content draft could not be updated. The new image was not attached.",
       };
     }
+
+    if (draft.image_key && draft.image_key !== imageKey) {
+      try {
+        await env.LINKEDIN_IMAGES.delete(draft.image_key);
+      } catch (error) {
+        console.error("Previous generated image cleanup failed.", error);
+      }
+    }
+
+    return redirect("/#content");
   }
 
   if (intent === "approve_content_image") {
@@ -445,19 +487,29 @@ export async function action({ request, context }: Route.ActionArgs) {
       };
     }
 
-    const result = await env.linkedinadam_db
-      .prepare(`
-        UPDATE content_drafts
-        SET
-          image_status = 'approved',
-          image_updated_at = CURRENT_TIMESTAMP,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-          AND image_key IS NOT NULL
-          AND image_status = 'generated'
-      `)
-      .bind(draftId)
-      .run();
+    let result;
+
+    try {
+      result = await env.linkedinadam_db
+        .prepare(`
+          UPDATE content_drafts
+          SET
+            image_status = 'approved',
+            image_updated_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+            AND image_key IS NOT NULL
+            AND image_status = 'generated'
+        `)
+        .bind(draftId)
+        .run();
+    } catch (error) {
+      console.error("Image approval database update failed.", error);
+
+      return {
+        error: "The image approval could not be saved to the database.",
+      };
+    }
 
     if (!result.meta.changes) {
       return {
@@ -477,16 +529,26 @@ export async function action({ request, context }: Route.ActionArgs) {
       };
     }
 
-    const draft = await env.linkedinadam_db
-      .prepare(`
-        SELECT image_key
-        FROM content_drafts
-        WHERE id = ?
-      `)
-      .bind(draftId)
-      .first<{
-        image_key: string | null;
-      }>();
+    let draft;
+
+    try {
+      draft = await env.linkedinadam_db
+        .prepare(`
+          SELECT image_key
+          FROM content_drafts
+          WHERE id = ?
+        `)
+        .bind(draftId)
+        .first<{
+          image_key: string | null;
+        }>();
+    } catch (error) {
+      console.error("Image removal draft lookup failed.", error);
+
+      return {
+        error: "The content draft could not be loaded from the database.",
+      };
+    }
 
     if (!draft) {
       return {
@@ -494,23 +556,179 @@ export async function action({ request, context }: Route.ActionArgs) {
       };
     }
 
-    await env.linkedinadam_db
-      .prepare(`
-        UPDATE content_drafts
-        SET
-          image_key = NULL,
-          image_prompt = NULL,
-          image_status = NULL,
-          image_mime_type = NULL,
-          image_updated_at = CURRENT_TIMESTAMP,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `)
-      .bind(draftId)
-      .run();
+    try {
+      await env.linkedinadam_db
+        .prepare(`
+          UPDATE content_drafts
+          SET
+            image_key = NULL,
+            image_prompt = NULL,
+            image_status = NULL,
+            image_mime_type = NULL,
+            image_updated_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `)
+        .bind(draftId)
+        .run();
+    } catch (error) {
+      console.error("Image removal database update failed.", error);
+
+      return {
+        error: "The image could not be removed from the content draft.",
+      };
+    }
 
     if (draft.image_key) {
-      await env.LINKEDIN_IMAGES.delete(draft.image_key);
+      try {
+        await env.LINKEDIN_IMAGES.delete(draft.image_key);
+      } catch (error) {
+        console.error("Removed image object cleanup failed.", error);
+      }
+    }
+
+    return redirect("/#content");
+  }
+
+  if (intent === "generate_content_draft") {
+    const employeeId = Number(formData.get("employee_id"));
+    const title = String(formData.get("title") ?? "").trim();
+    const topic = String(formData.get("topic") ?? "").trim();
+    const postFormat = String(
+      formData.get("post_format") ?? "original_post",
+    );
+    const scheduledFor = String(
+      formData.get("scheduled_for") ?? "",
+    ).trim();
+
+    if (!Number.isInteger(employeeId)) {
+      return {
+        error: "Select a valid employee.",
+      };
+    }
+
+    if (!topic) {
+      return {
+        error: "Add a topic before generating a post draft.",
+      };
+    }
+
+    if (!["original_post", "short_post"].includes(postFormat)) {
+      return {
+        error: "Select a valid post format.",
+      };
+    }
+
+    if (!env.OPENAI_API_KEY) {
+      return {
+        error: "The OpenAI API key is not configured.",
+      };
+    }
+
+    let employee;
+
+    try {
+      employee = await env.linkedinadam_db
+        .prepare(`
+          SELECT
+            e.name,
+            e.role_name,
+            p.primary_audience,
+            p.primary_expertise,
+            p.positioning_statement,
+            p.recurring_series,
+            p.lead_magnet,
+            p.soft_cta,
+            p.guardrail
+          FROM employees e
+          LEFT JOIN employee_playbooks ep
+            ON ep.employee_id = e.id
+          LEFT JOIN playbooks p
+            ON p.id = ep.playbook_id
+          WHERE e.id = ?
+        `)
+        .bind(employeeId)
+        .first<{
+          name: string;
+          role_name: string;
+          primary_audience: string | null;
+          primary_expertise: string | null;
+          positioning_statement: string | null;
+          recurring_series: string | null;
+          lead_magnet: string | null;
+          soft_cta: string | null;
+          guardrail: string | null;
+        }>();
+    } catch (error) {
+      console.error("Employee generation context lookup failed.", error);
+
+      return {
+        error:
+          "The employee and playbook details could not be loaded from the database.",
+      };
+    }
+
+    if (!employee) {
+      return {
+        error: "The selected employee could not be found.",
+      };
+    }
+
+    let generatedPost;
+
+    try {
+      generatedPost = await generateLinkedInPost({
+        apiKey: env.OPENAI_API_KEY,
+        employeeName: employee.name,
+        roleName: employee.role_name,
+        topic,
+        postFormat: postFormat as "original_post" | "short_post",
+        primaryAudience: employee.primary_audience,
+        primaryExpertise: employee.primary_expertise,
+        positioningStatement: employee.positioning_statement,
+        recurringSeries: employee.recurring_series,
+        leadMagnet: employee.lead_magnet,
+        softCta: employee.soft_cta,
+        guardrail: employee.guardrail,
+      });
+    } catch (error) {
+      console.error("OpenAI post generation failed.", error);
+
+      return {
+        error: getSafeOpenAIErrorMessage(error, "post"),
+      };
+    }
+
+    try {
+      await env.linkedinadam_db
+        .prepare(`
+          INSERT INTO content_drafts (
+            employee_id,
+            title,
+            body,
+            post_format,
+            topic,
+            scheduled_for,
+            status
+          )
+          VALUES (?, ?, ?, ?, ?, ?, 'draft')
+        `)
+        .bind(
+          employeeId,
+          title || null,
+          generatedPost,
+          postFormat,
+          topic,
+          scheduledFor || null,
+        )
+        .run();
+    } catch (error) {
+      console.error("Generated post database insert failed.", error);
+
+      return {
+        error:
+          "The post was generated, but the draft could not be saved to the database.",
+      };
     }
 
     return redirect("/#content");
@@ -1429,12 +1647,6 @@ export default function Home({
 
           <div className="content-workflow-grid">
             <Form method="post" className="content-draft-form">
-              <input
-                type="hidden"
-                name="intent"
-                value="create_content_draft"
-              />
-
               <label>
                 Employee
                 <select name="employee_id" defaultValue="" required>
@@ -1501,9 +1713,29 @@ export default function Home({
                 />
               </label>
 
-              <button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? "Saving..." : "Create draft"}
-              </button>
+              <div className="form-actions">
+                <button
+                  type="submit"
+                  name="intent"
+                  value="generate_content_draft"
+                  formNoValidate
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting
+                    ? "Working..."
+                    : "Generate AI draft"}
+                </button>
+
+                <button
+                  type="submit"
+                  name="intent"
+                  value="create_content_draft"
+                  className="secondary"
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? "Saving..." : "Create manual draft"}
+                </button>
+              </div>
             </Form>
 
             <div className="draft-queue">
