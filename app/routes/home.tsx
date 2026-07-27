@@ -17,6 +17,12 @@ type Employee = {
   weekly_short_posts: number;
   weekly_meaningful_comments: number;
   weekly_new_connections: number;
+  original_posts_completed: number;
+  short_posts_completed: number;
+  meaningful_comments_completed: number;
+  relevant_connections_completed: number;
+  qualified_conversations: number;
+  leads_handed_off: number;
   lead_magnet: string | null;
   soft_cta: string | null;
   qualified_buying_signal: string | null;
@@ -68,8 +74,19 @@ const agents = [
   },
 ];
 
+function getCurrentWeekStart() {
+  const now = new Date();
+  const day = now.getUTCDay();
+  const daysSinceMonday = day === 0 ? 6 : day - 1;
+
+  now.setUTCDate(now.getUTCDate() - daysSinceMonday);
+
+  return now.toISOString().slice(0, 10);
+}
+
 export async function loader({ context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as unknown as AppEnvironment;
+  const weekStart = getCurrentWeekStart();
 
   const employeeQuery = await env.linkedinadam_db
     .prepare(`
@@ -89,6 +106,12 @@ export async function loader({ context }: Route.LoaderArgs) {
         COALESCE(p.weekly_short_posts, 0) AS weekly_short_posts,
         COALESCE(p.weekly_meaningful_comments, 0) AS weekly_meaningful_comments,
         COALESCE(p.weekly_new_connections, 0) AS weekly_new_connections,
+        COALESCE(wa.original_posts_completed, 0) AS original_posts_completed,
+        COALESCE(wa.short_posts_completed, 0) AS short_posts_completed,
+        COALESCE(wa.meaningful_comments_completed, 0) AS meaningful_comments_completed,
+        COALESCE(wa.relevant_connections_completed, 0) AS relevant_connections_completed,
+        COALESCE(wa.qualified_conversations, 0) AS qualified_conversations,
+        COALESCE(wa.leads_handed_off, 0) AS leads_handed_off,
         p.lead_magnet,
         p.soft_cta,
         p.qualified_buying_signal,
@@ -99,8 +122,12 @@ export async function loader({ context }: Route.LoaderArgs) {
         ON ep.employee_id = e.id
       LEFT JOIN playbooks p
         ON p.id = ep.playbook_id
+      LEFT JOIN weekly_activity wa
+        ON wa.employee_id = e.id
+        AND wa.week_start = ?
       ORDER BY e.name ASC
     `)
+    .bind(weekStart)
     .all<Employee>();
 
   const playbookQuery = await env.linkedinadam_db
@@ -114,12 +141,94 @@ export async function loader({ context }: Route.LoaderArgs) {
   return {
     employees: employeeQuery.results ?? [],
     playbooks: playbookQuery.results ?? [],
+    weekStart,
   };
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
   const env = context.cloudflare.env as unknown as AppEnvironment;
   const formData = await request.formData();
+  const intent = String(formData.get("intent") ?? "add_employee");
+
+  if (intent === "update_activity") {
+    const employeeId = Number(formData.get("employee_id"));
+    const weekStart = getCurrentWeekStart();
+
+    const toCount = (value: FormDataEntryValue | null) => {
+      const count = Number(value ?? 0);
+
+      if (!Number.isFinite(count)) {
+        return 0;
+      }
+
+      return Math.max(0, Math.floor(count));
+    };
+
+    if (!Number.isInteger(employeeId)) {
+      return {
+        error: "A valid employee is required.",
+      };
+    }
+
+    const originalPosts = toCount(
+      formData.get("original_posts_completed"),
+    );
+    const shortPosts = toCount(
+      formData.get("short_posts_completed"),
+    );
+    const comments = toCount(
+      formData.get("meaningful_comments_completed"),
+    );
+    const connections = toCount(
+      formData.get("relevant_connections_completed"),
+    );
+    const conversations = toCount(
+      formData.get("qualified_conversations"),
+    );
+    const leads = toCount(formData.get("leads_handed_off"));
+
+    await env.linkedinadam_db
+      .prepare(`
+        INSERT INTO weekly_activity (
+          employee_id,
+          week_start,
+          original_posts_completed,
+          short_posts_completed,
+          meaningful_comments_completed,
+          relevant_connections_completed,
+          qualified_conversations,
+          leads_handed_off
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(employee_id, week_start)
+        DO UPDATE SET
+          original_posts_completed =
+            excluded.original_posts_completed,
+          short_posts_completed =
+            excluded.short_posts_completed,
+          meaningful_comments_completed =
+            excluded.meaningful_comments_completed,
+          relevant_connections_completed =
+            excluded.relevant_connections_completed,
+          qualified_conversations =
+            excluded.qualified_conversations,
+          leads_handed_off =
+            excluded.leads_handed_off
+      `)
+      .bind(
+        employeeId,
+        weekStart,
+        originalPosts,
+        shortPosts,
+        comments,
+        connections,
+        conversations,
+        leads,
+      )
+      .run();
+
+    return redirect("/#employees");
+  }
 
   const name = String(formData.get("name") ?? "").trim();
   const email = String(formData.get("email") ?? "").trim();
@@ -197,6 +306,7 @@ export default function Home({
 }: Route.ComponentProps) {
   const employees = loaderData.employees;
   const playbooks = loaderData.playbooks;
+  const weekStart = loaderData.weekStart;
 
   const totalOriginalPosts = employees.reduce(
     (total, employee) => total + employee.weekly_original_posts,
@@ -343,6 +453,118 @@ export default function Home({
                         </div>
                       </div>
 
+                      <div className="weekly-progress">
+                        <div className="weekly-progress-heading">
+                          <div>
+                            <span className="eyebrow">WEEKLY PROGRESS</span>
+                            <h4>Week beginning {weekStart}</h4>
+                          </div>
+                        </div>
+
+                        <Form method="post" className="activity-form">
+                          <input
+                            type="hidden"
+                            name="intent"
+                            value="update_activity"
+                          />
+                          <input
+                            type="hidden"
+                            name="employee_id"
+                            value={employee.id}
+                          />
+
+                          <label>
+                            Original posts
+                            <input
+                              type="number"
+                              name="original_posts_completed"
+                              min="0"
+                              defaultValue={
+                                employee.original_posts_completed
+                              }
+                            />
+                            <span>
+                              Target: {employee.weekly_original_posts}
+                            </span>
+                          </label>
+
+                          <label>
+                            Short posts
+                            <input
+                              type="number"
+                              name="short_posts_completed"
+                              min="0"
+                              defaultValue={
+                                employee.short_posts_completed
+                              }
+                            />
+                            <span>
+                              Target: {employee.weekly_short_posts}
+                            </span>
+                          </label>
+
+                          <label>
+                            Comments
+                            <input
+                              type="number"
+                              name="meaningful_comments_completed"
+                              min="0"
+                              defaultValue={
+                                employee.meaningful_comments_completed
+                              }
+                            />
+                            <span>
+                              Target: {
+                                employee.weekly_meaningful_comments
+                              }
+                            </span>
+                          </label>
+
+                          <label>
+                            Connections
+                            <input
+                              type="number"
+                              name="relevant_connections_completed"
+                              min="0"
+                              defaultValue={
+                                employee.relevant_connections_completed
+                              }
+                            />
+                            <span>
+                              Target: {
+                                employee.weekly_new_connections
+                              }
+                            </span>
+                          </label>
+
+                          <label>
+                            Qualified conversations
+                            <input
+                              type="number"
+                              name="qualified_conversations"
+                              min="0"
+                              defaultValue={
+                                employee.qualified_conversations
+                              }
+                            />
+                          </label>
+
+                          <label>
+                            Leads handed off
+                            <input
+                              type="number"
+                              name="leads_handed_off"
+                              min="0"
+                              defaultValue={employee.leads_handed_off}
+                            />
+                          </label>
+
+                          <button type="submit">
+                            Save weekly progress
+                          </button>
+                        </Form>
+                      </div>
+
                       <div className="strategy-grid">
                         <div className="strategy-item">
                           <span>Primary audience</span>
@@ -408,6 +630,12 @@ export default function Home({
             </div>
 
             <Form method="post" className="employee-form">
+              <input
+                type="hidden"
+                name="intent"
+                value="add_employee"
+              />
+
               <label>
                 Employee name
                 <input

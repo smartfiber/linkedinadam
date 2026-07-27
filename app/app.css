@@ -625,3 +625,69 @@ button.secondary {
     align-items: flex-start;
   }
 }
+
+.weekly-progress {
+  margin-top: 16px;
+  padding: 18px;
+  border: 1px solid #dce5f1;
+  border-radius: 12px;
+  background: #f8fafd;
+}
+
+.weekly-progress-heading h4 {
+  margin: 5px 0 15px;
+  color: #1d2940;
+  font-size: 16px;
+}
+
+.activity-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.activity-form label {
+  display: grid;
+  gap: 5px;
+  color: #4c5870;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.activity-form label span {
+  color: #8994a7;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.activity-form input {
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+  color: #172033;
+  font: inherit;
+  background: #fff;
+}
+
+.activity-form input:focus {
+  border-color: #1675e7;
+  outline: 3px solid rgba(22, 117, 231, 0.12);
+}
+
+.activity-form button {
+  align-self: end;
+  min-height: 41px;
+}
+
+@media (max-width: 900px) {
+  .activity-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .activity-form {
+    grid-template-columns: 1fr;
+  }
+}
