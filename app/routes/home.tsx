@@ -248,10 +248,19 @@ export default function Home({
                       </p>
                     </div>
 
-                    <div className="playbook-badge">
-                      {employee.playbook_id
-                        ? "Playbook assigned"
-                        : "Needs playbook"}
+                    <div className="playbook-header-actions">
+                      <div className="playbook-badge">
+                        {employee.playbook_id
+                          ? "Playbook assigned"
+                          : "Needs playbook"}
+                      </div>
+
+                      <a
+                        className="edit-employee-link"
+                        href={`/employees/${employee.id}`}
+                      >
+                        Edit employee
+                      </a>
                     </div>
                   </div>
 

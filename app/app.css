@@ -535,3 +535,93 @@ button.secondary {
     flex-direction: column;
   }
 }
+
+.playbook-header-actions {
+  display: flex;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.edit-employee-link,
+.cancel-link,
+.back-link {
+  color: #1675e7;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.edit-employee-link {
+  font-size: 13px;
+}
+
+.edit-page {
+  min-height: 100vh;
+  padding: 40px 20px;
+  background: #f3f6fa;
+}
+
+.edit-shell {
+  width: min(900px, 100%);
+  margin: 0 auto;
+}
+
+.edit-panel {
+  margin-top: 18px;
+  margin-bottom: 18px;
+}
+
+.employee-form select {
+  width: 100%;
+  padding: 12px 13px;
+  border: 1px solid #dbe2ec;
+  border-radius: 9px;
+  color: #172033;
+  font: inherit;
+  background: #fff;
+}
+
+.employee-form select:focus {
+  border-color: #1675e7;
+  outline: 3px solid rgba(22, 117, 231, 0.12);
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.playbook-option-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.playbook-option {
+  padding: 16px;
+  border: 1px solid #e2e7ef;
+  border-radius: 11px;
+  background: #fafbfd;
+}
+
+.playbook-option strong,
+.playbook-option span {
+  display: block;
+}
+
+.playbook-option p {
+  margin: 7px 0;
+  color: #526078;
+}
+
+.playbook-option span {
+  color: #7a879b;
+  font-size: 13px;
+}
+
+@media (max-width: 800px) {
+  .playbook-header-actions {
+    align-items: flex-start;
+  }
+}
