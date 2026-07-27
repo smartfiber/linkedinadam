@@ -55,6 +55,16 @@ type ContentDraft = {
   created_at: string;
 };
 
+type ContentReviewHistory = {
+  id: number;
+  content_draft_id: number;
+  from_status: string | null;
+  to_status: string;
+  reviewer_name: string | null;
+  review_note: string | null;
+  created_at: string;
+};
+
 type ActivityEvent = {
   id: number;
   employee_name: string;
@@ -229,6 +239,22 @@ export async function loader({ context }: Route.LoaderArgs) {
     `)
     .all<ContentDraft>();
 
+  const reviewHistoryQuery = await env.linkedinadam_db
+    .prepare(`
+      SELECT
+        id,
+        content_draft_id,
+        from_status,
+        to_status,
+        reviewer_name,
+        review_note,
+        created_at
+      FROM content_review_history
+      ORDER BY created_at DESC, id DESC
+      LIMIT 100
+    `)
+    .all<ContentReviewHistory>();
+
   const activityQuery = await env.linkedinadam_db
     .prepare(`
       SELECT
@@ -252,6 +278,7 @@ export async function loader({ context }: Route.LoaderArgs) {
     playbooks: playbookQuery.results ?? [],
     recentActivities: activityQuery.results ?? [],
     contentDrafts: contentQuery.results ?? [],
+    reviewHistory: reviewHistoryQuery.results ?? [],
     weekStart,
   };
 }
@@ -323,6 +350,12 @@ export async function action({ request, context }: Route.ActionArgs) {
     const linkedinPostUrl = String(
       formData.get("linkedin_post_url") ?? "",
     ).trim();
+    const reviewerName = String(
+      formData.get("reviewer_name") ?? "",
+    ).trim();
+    const reviewNote = String(
+      formData.get("review_note") ?? "",
+    ).trim();
 
     if (!Number.isInteger(draftId)) {
       return {
@@ -356,6 +389,12 @@ export async function action({ request, context }: Route.ActionArgs) {
       };
     }
 
+    if (!reviewerName) {
+      return {
+        error: "Reviewer name is required.",
+      };
+    }
+
     if (nextStatus === "approved") {
       if (draft.status !== "draft") {
         return {
@@ -363,17 +402,35 @@ export async function action({ request, context }: Route.ActionArgs) {
         };
       }
 
-      await env.linkedinadam_db
-        .prepare(`
-          UPDATE content_drafts
-          SET
-            status = 'approved',
-            approved_at = CURRENT_TIMESTAMP,
-            updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `)
-        .bind(draftId)
-        .run();
+      await env.linkedinadam_db.batch([
+        env.linkedinadam_db
+          .prepare(`
+            UPDATE content_drafts
+            SET
+              status = 'approved',
+              approved_at = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `)
+          .bind(draftId),
+
+        env.linkedinadam_db
+          .prepare(`
+            INSERT INTO content_review_history (
+              content_draft_id,
+              from_status,
+              to_status,
+              reviewer_name,
+              review_note
+            )
+            VALUES (?, 'draft', 'approved', ?, ?)
+          `)
+          .bind(
+            draftId,
+            reviewerName,
+            reviewNote || null,
+          ),
+      ]);
 
       return redirect("/#content");
     }
@@ -385,17 +442,37 @@ export async function action({ request, context }: Route.ActionArgs) {
         };
       }
 
-      await env.linkedinadam_db
-        .prepare(`
-          UPDATE content_drafts
-          SET
-            status = 'draft',
-            approved_at = NULL,
-            updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `)
-        .bind(draftId)
-        .run();
+      if (!reviewNote) {
+        return {
+          error: "Explain why the post is being returned to draft.",
+        };
+      }
+
+      await env.linkedinadam_db.batch([
+        env.linkedinadam_db
+          .prepare(`
+            UPDATE content_drafts
+            SET
+              status = 'draft',
+              approved_at = NULL,
+              updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `)
+          .bind(draftId),
+
+        env.linkedinadam_db
+          .prepare(`
+            INSERT INTO content_review_history (
+              content_draft_id,
+              from_status,
+              to_status,
+              reviewer_name,
+              review_note
+            )
+            VALUES (?, 'approved', 'draft', ?, ?)
+          `)
+          .bind(draftId, reviewerName, reviewNote),
+      ]);
 
       return redirect("/#content");
     }
@@ -458,6 +535,23 @@ export async function action({ request, context }: Route.ActionArgs) {
             `content_draft:${draft.id}`,
             linkedinPostUrl,
             draft.title || "Published through LinkedInAdam",
+          ),
+
+        env.linkedinadam_db
+          .prepare(`
+            INSERT INTO content_review_history (
+              content_draft_id,
+              from_status,
+              to_status,
+              reviewer_name,
+              review_note
+            )
+            VALUES (?, 'approved', 'published', ?, ?)
+          `)
+          .bind(
+            draftId,
+            reviewerName,
+            reviewNote || null,
           ),
       ]);
 
@@ -699,6 +793,7 @@ export default function Home({
   const playbooks = loaderData.playbooks;
   const recentActivities = loaderData.recentActivities;
   const contentDrafts = loaderData.contentDrafts;
+  const reviewHistory = loaderData.reviewHistory;
   const weekStart = loaderData.weekStart;
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
@@ -1244,6 +1339,20 @@ export default function Home({
                           value="approved"
                         />
 
+                        <input
+                          type="text"
+                          name="reviewer_name"
+                          placeholder="Reviewer name"
+                          defaultValue="Adam Copenhaver"
+                          required
+                        />
+
+                        <input
+                          type="text"
+                          name="review_note"
+                          placeholder="Optional approval note"
+                        />
+
                         <button
                           type="submit"
                           disabled={isSubmitting}
@@ -1273,6 +1382,21 @@ export default function Home({
                             type="hidden"
                             name="next_status"
                             value="draft"
+                          />
+
+                          <input
+                            type="text"
+                            name="reviewer_name"
+                            placeholder="Reviewer name"
+                            defaultValue="Adam Copenhaver"
+                            required
+                          />
+
+                          <input
+                            type="text"
+                            name="review_note"
+                            placeholder="What needs to change?"
+                            required
                           />
 
                           <button
@@ -1307,6 +1431,20 @@ export default function Home({
                         />
 
                         <input
+                          type="text"
+                          name="reviewer_name"
+                          placeholder="Publisher name"
+                          defaultValue="Adam Copenhaver"
+                          required
+                        />
+
+                        <input
+                          type="text"
+                          name="review_note"
+                          placeholder="Optional publication note"
+                        />
+
+                        <input
                           type="url"
                           name="linkedin_post_url"
                           placeholder="Published LinkedIn URL"
@@ -1336,6 +1474,48 @@ export default function Home({
                         Open published post ↗
                       </a>
                     ) : null}
+
+                    <div className="review-history">
+                      <strong>Review history</strong>
+
+                      {reviewHistory.filter(
+                        (item) =>
+                          item.content_draft_id === draft.id,
+                      ).length === 0 ? (
+                        <p className="review-history-empty">
+                          No review actions recorded yet.
+                        </p>
+                      ) : (
+                        reviewHistory
+                          .filter(
+                            (item) =>
+                              item.content_draft_id === draft.id,
+                          )
+                          .map((item) => (
+                            <div
+                              className="review-history-row"
+                              key={item.id}
+                            >
+                              <div>
+                                <strong>
+                                  {item.from_status || "created"} →{" "}
+                                  {item.to_status}
+                                </strong>
+                                <span>
+                                  {item.reviewer_name ||
+                                    "Unknown reviewer"}
+                                </span>
+                              </div>
+
+                              {item.review_note ? (
+                                <p>{item.review_note}</p>
+                              ) : null}
+
+                              <time>{item.created_at}</time>
+                            </div>
+                          ))
+                      )}
+                    </div>
                   </article>
                 ))
               )}

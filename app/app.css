@@ -1119,3 +1119,79 @@ button:disabled {
 .approved-actions > form:first-child {
   justify-self: start;
 }
+
+.review-action-form,
+.draft-actions form,
+.approved-actions > form {
+  display: grid;
+  gap: 9px;
+}
+
+.draft-actions form input,
+.approved-actions input {
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+  color: #172033;
+  font: inherit;
+  background: white;
+}
+
+.review-history {
+  margin-top: 18px;
+  padding-top: 15px;
+  border-top: 1px solid #e7ebf1;
+}
+
+.review-history > strong {
+  color: #465168;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.review-history-empty {
+  margin: 8px 0 0;
+  color: #8a95a8;
+  font-size: 12px;
+}
+
+.review-history-row {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 11px 12px;
+  border-radius: 9px;
+  background: #f7f9fc;
+}
+
+.review-history-row > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.review-history-row > div strong {
+  color: #27344b;
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.review-history-row > div span,
+.review-history-row time {
+  color: #8490a3;
+  font-size: 11px;
+}
+
+.review-history-row p {
+  margin: 0;
+  color: #536078;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.publish-form {
+  grid-template-columns: 1fr;
+}
