@@ -691,3 +691,67 @@ button.secondary {
     grid-template-columns: 1fr;
   }
 }
+
+.activity-event-panel {
+  margin-top: 16px;
+  padding: 18px;
+  border: 1px solid #cfe0f7;
+  border-radius: 12px;
+  background: #f2f7fd;
+}
+
+.activity-event-panel h4 {
+  margin: 5px 0 15px;
+  color: #1d2940;
+  font-size: 16px;
+}
+
+.event-form {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr 1.4fr auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.event-form label {
+  display: grid;
+  gap: 6px;
+  color: #4c5870;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.event-form input,
+.event-form select {
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 11px;
+  border: 1px solid #d2dce9;
+  border-radius: 8px;
+  color: #172033;
+  font: inherit;
+  background: white;
+}
+
+.event-form input:focus,
+.event-form select:focus {
+  border-color: #1675e7;
+  outline: 3px solid rgba(22, 117, 231, 0.12);
+}
+
+.event-form button {
+  min-height: 42px;
+  white-space: nowrap;
+}
+
+@media (max-width: 1050px) {
+  .event-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 650px) {
+  .event-form {
+    grid-template-columns: 1fr;
+  }
+}

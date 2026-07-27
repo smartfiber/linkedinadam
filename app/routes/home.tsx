@@ -150,6 +150,78 @@ export async function action({ request, context }: Route.ActionArgs) {
   const formData = await request.formData();
   const intent = String(formData.get("intent") ?? "add_employee");
 
+  if (intent === "log_activity") {
+    const employeeId = Number(formData.get("employee_id"));
+    const eventType = String(formData.get("event_type") ?? "");
+    const description = String(
+      formData.get("description") ?? "",
+    ).trim();
+    const contentUrl = String(
+      formData.get("content_url") ?? "",
+    ).trim();
+    const weekStart = getCurrentWeekStart();
+
+    const activityColumns: Record<string, string> = {
+      original_post: "original_posts_completed",
+      short_post: "short_posts_completed",
+      meaningful_comment: "meaningful_comments_completed",
+      relevant_connection: "relevant_connections_completed",
+      qualified_conversation: "qualified_conversations",
+      lead_handoff: "leads_handed_off",
+    };
+
+    const activityColumn = activityColumns[eventType];
+
+    if (!Number.isInteger(employeeId)) {
+      return {
+        error: "A valid employee is required.",
+      };
+    }
+
+    if (!activityColumn) {
+      return {
+        error: "Select a valid activity type.",
+      };
+    }
+
+    await env.linkedinadam_db.batch([
+      env.linkedinadam_db
+        .prepare(`
+          INSERT INTO activity_events (
+            employee_id,
+            event_type,
+            source,
+            content_url,
+            description,
+            occurred_at
+          )
+          VALUES (?, ?, 'manual', ?, ?, CURRENT_TIMESTAMP)
+        `)
+        .bind(
+          employeeId,
+          eventType,
+          contentUrl || null,
+          description || null,
+        ),
+
+      env.linkedinadam_db
+        .prepare(`
+          INSERT INTO weekly_activity (
+            employee_id,
+            week_start,
+            ${activityColumn}
+          )
+          VALUES (?, ?, 1)
+          ON CONFLICT(employee_id, week_start)
+          DO UPDATE SET
+            ${activityColumn} = ${activityColumn} + 1
+        `)
+        .bind(employeeId, weekStart),
+    ]);
+
+    return redirect("/#employees");
+  }
+
   if (intent === "update_activity") {
     const employeeId = Number(formData.get("employee_id"));
     const weekStart = getCurrentWeekStart();
@@ -451,6 +523,86 @@ export default function Home({
                           <strong>{employee.weekly_new_connections}</strong>
                           <span>connections</span>
                         </div>
+                      </div>
+
+                      <div className="activity-event-panel">
+                        <div>
+                          <span className="eyebrow">LOG ACTIVITY</span>
+                          <h4>Add one completed action</h4>
+                        </div>
+
+                        <Form method="post" className="event-form">
+                          <input
+                            type="hidden"
+                            name="intent"
+                            value="log_activity"
+                          />
+
+                          <input
+                            type="hidden"
+                            name="employee_id"
+                            value={employee.id}
+                          />
+
+                          <label>
+                            Activity type
+                            <select
+                              name="event_type"
+                              defaultValue=""
+                              required
+                            >
+                              <option value="" disabled>
+                                Select an activity
+                              </option>
+
+                              <option value="original_post">
+                                Original post
+                              </option>
+
+                              <option value="short_post">
+                                Short post
+                              </option>
+
+                              <option value="meaningful_comment">
+                                Meaningful comment
+                              </option>
+
+                              <option value="relevant_connection">
+                                Relevant connection
+                              </option>
+
+                              <option value="qualified_conversation">
+                                Qualified conversation
+                              </option>
+
+                              <option value="lead_handoff">
+                                Lead handed off
+                              </option>
+                            </select>
+                          </label>
+
+                          <label>
+                            Description
+                            <input
+                              type="text"
+                              name="description"
+                              placeholder="Optional note about the activity"
+                            />
+                          </label>
+
+                          <label>
+                            LinkedIn URL
+                            <input
+                              type="url"
+                              name="content_url"
+                              placeholder="https://www.linkedin.com/..."
+                            />
+                          </label>
+
+                          <button type="submit">
+                            Log completed activity
+                          </button>
+                        </Form>
                       </div>
 
                       <div className="weekly-progress">
