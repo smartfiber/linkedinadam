@@ -116,12 +116,24 @@ export async function loader({ context }: Route.LoaderArgs) {
         COALESCE(p.weekly_short_posts, 0) AS weekly_short_posts,
         COALESCE(p.weekly_meaningful_comments, 0) AS weekly_meaningful_comments,
         COALESCE(p.weekly_new_connections, 0) AS weekly_new_connections,
-        COALESCE(wa.original_posts_completed, 0) AS original_posts_completed,
-        COALESCE(wa.short_posts_completed, 0) AS short_posts_completed,
-        COALESCE(wa.meaningful_comments_completed, 0) AS meaningful_comments_completed,
-        COALESCE(wa.relevant_connections_completed, 0) AS relevant_connections_completed,
-        COALESCE(wa.qualified_conversations, 0) AS qualified_conversations,
-        COALESCE(wa.leads_handed_off, 0) AS leads_handed_off,
+        COALESCE(SUM(
+          CASE WHEN a.event_type = 'original_post' THEN 1 ELSE 0 END
+        ), 0) AS original_posts_completed,
+        COALESCE(SUM(
+          CASE WHEN a.event_type = 'short_post' THEN 1 ELSE 0 END
+        ), 0) AS short_posts_completed,
+        COALESCE(SUM(
+          CASE WHEN a.event_type = 'meaningful_comment' THEN 1 ELSE 0 END
+        ), 0) AS meaningful_comments_completed,
+        COALESCE(SUM(
+          CASE WHEN a.event_type = 'relevant_connection' THEN 1 ELSE 0 END
+        ), 0) AS relevant_connections_completed,
+        COALESCE(SUM(
+          CASE WHEN a.event_type = 'qualified_conversation' THEN 1 ELSE 0 END
+        ), 0) AS qualified_conversations,
+        COALESCE(SUM(
+          CASE WHEN a.event_type = 'lead_handoff' THEN 1 ELSE 0 END
+        ), 0) AS leads_handed_off,
         p.lead_magnet,
         p.soft_cta,
         p.qualified_buying_signal,
@@ -132,12 +144,34 @@ export async function loader({ context }: Route.LoaderArgs) {
         ON ep.employee_id = e.id
       LEFT JOIN playbooks p
         ON p.id = ep.playbook_id
-      LEFT JOIN weekly_activity wa
-        ON wa.employee_id = e.id
-        AND wa.week_start = ?
+      LEFT JOIN activity_events a
+        ON a.employee_id = e.id
+        AND date(a.occurred_at) >= ?
+        AND date(a.occurred_at) < date(?, '+7 days')
+      GROUP BY
+        e.id,
+        e.name,
+        e.email,
+        e.linkedin_profile_url,
+        e.role_name,
+        e.status,
+        p.id,
+        p.primary_audience,
+        p.primary_expertise,
+        p.positioning_statement,
+        p.recurring_series,
+        p.weekly_original_posts,
+        p.weekly_short_posts,
+        p.weekly_meaningful_comments,
+        p.weekly_new_connections,
+        p.lead_magnet,
+        p.soft_cta,
+        p.qualified_buying_signal,
+        p.lead_handoff_action,
+        p.guardrail
       ORDER BY e.name ASC
     `)
-    .bind(weekStart)
+    .bind(weekStart, weekStart)
     .all<Employee>();
 
   const playbookQuery = await env.linkedinadam_db
@@ -636,120 +670,6 @@ export default function Home({
                             {isSubmitting
                               ? "Saving..."
                               : "Log completed activity"}
-                          </button>
-                        </Form>
-                      </div>
-
-                      <div className="weekly-progress">
-                        <div className="weekly-progress-heading">
-                          <div>
-                            <span className="eyebrow">WEEKLY PROGRESS</span>
-                            <h4>Week beginning {weekStart}</h4>
-                          </div>
-                        </div>
-
-                        <Form method="post" className="activity-form">
-                          <input
-                            type="hidden"
-                            name="intent"
-                            value="update_activity"
-                          />
-                          <input
-                            type="hidden"
-                            name="employee_id"
-                            value={employee.id}
-                          />
-
-                          <label>
-                            Original posts
-                            <input
-                              type="number"
-                              name="original_posts_completed"
-                              min="0"
-                              defaultValue={
-                                employee.original_posts_completed
-                              }
-                            />
-                            <span>
-                              Target: {employee.weekly_original_posts}
-                            </span>
-                          </label>
-
-                          <label>
-                            Short posts
-                            <input
-                              type="number"
-                              name="short_posts_completed"
-                              min="0"
-                              defaultValue={
-                                employee.short_posts_completed
-                              }
-                            />
-                            <span>
-                              Target: {employee.weekly_short_posts}
-                            </span>
-                          </label>
-
-                          <label>
-                            Comments
-                            <input
-                              type="number"
-                              name="meaningful_comments_completed"
-                              min="0"
-                              defaultValue={
-                                employee.meaningful_comments_completed
-                              }
-                            />
-                            <span>
-                              Target: {
-                                employee.weekly_meaningful_comments
-                              }
-                            </span>
-                          </label>
-
-                          <label>
-                            Connections
-                            <input
-                              type="number"
-                              name="relevant_connections_completed"
-                              min="0"
-                              defaultValue={
-                                employee.relevant_connections_completed
-                              }
-                            />
-                            <span>
-                              Target: {
-                                employee.weekly_new_connections
-                              }
-                            </span>
-                          </label>
-
-                          <label>
-                            Qualified conversations
-                            <input
-                              type="number"
-                              name="qualified_conversations"
-                              min="0"
-                              defaultValue={
-                                employee.qualified_conversations
-                              }
-                            />
-                          </label>
-
-                          <label>
-                            Leads handed off
-                            <input
-                              type="number"
-                              name="leads_handed_off"
-                              min="0"
-                              defaultValue={employee.leads_handed_off}
-                            />
-                          </label>
-
-                          <button type="submit" disabled={isSubmitting}>
-                            {isSubmitting
-                              ? "Saving..."
-                              : "Save weekly progress"}
                           </button>
                         </Form>
                       </div>
