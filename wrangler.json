@@ -3,12 +3,22 @@
 	"name": "linkedinadam",
 	"main": "./workers/app.ts",
 	"compatibility_date": "2025-10-08",
-	"compatibility_flags": ["nodejs_compat"],
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
 	"observability": {
 		"enabled": true
 	},
 	"upload_source_maps": true,
 	"vars": {
 		"VALUE_FROM_CLOUDFLARE": "Hello from Cloudflare"
-	}
+	},
+	"d1_databases": [
+		{
+			"binding": "linkedinadam_db",
+			"database_name": "linkedinadam-db",
+			"database_id": "0ea66e00-0212-4639-8f6d-4852dd4dac73",
+			"remote": true
+		}
+	]
 }
