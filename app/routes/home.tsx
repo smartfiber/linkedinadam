@@ -1,4 +1,4 @@
-import { Form, redirect } from "react-router";
+import { Form, redirect, useNavigation } from "react-router";
 import type { Route } from "./+types/home";
 
 type Employee = {
@@ -379,6 +379,8 @@ export default function Home({
   const employees = loaderData.employees;
   const playbooks = loaderData.playbooks;
   const weekStart = loaderData.weekStart;
+  const navigation = useNavigation();
+  const isSubmitting = navigation.state === "submitting";
 
   const totalOriginalPosts = employees.reduce(
     (total, employee) => total + employee.weekly_original_posts,
@@ -599,8 +601,10 @@ export default function Home({
                             />
                           </label>
 
-                          <button type="submit">
-                            Log completed activity
+                          <button type="submit" disabled={isSubmitting}>
+                            {isSubmitting
+                              ? "Saving..."
+                              : "Log completed activity"}
                           </button>
                         </Form>
                       </div>
@@ -711,8 +715,10 @@ export default function Home({
                             />
                           </label>
 
-                          <button type="submit">
-                            Save weekly progress
+                          <button type="submit" disabled={isSubmitting}>
+                            {isSubmitting
+                              ? "Saving..."
+                              : "Save weekly progress"}
                           </button>
                         </Form>
                       </div>
