@@ -900,6 +900,10 @@ export default function Planner({
           <Link className="back-link" to="/">
             ← Dashboard
           </Link>
+          <span> · </span>
+          <Link className="back-link" to="/orchestration">
+            Use gated Post Orchestration
+          </Link>
           <p className="eyebrow">CONTENT STRATEGY</p>
           <h1>Weekly content planner</h1>
           <p>

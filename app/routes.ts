@@ -9,6 +9,7 @@ export default [
   route("calendar", "routes/calendar.tsx"),
   route("analytics", "routes/analytics.tsx"),
   route("planner", "routes/planner.tsx"),
+  route("orchestration", "routes/orchestration.tsx"),
   route("playbooks", "routes/playbooks.tsx"),
   route("connections", "routes/connections.tsx"),
   route("operations", "routes/operations.tsx"),
