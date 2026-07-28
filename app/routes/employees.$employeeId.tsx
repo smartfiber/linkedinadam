@@ -13,6 +13,7 @@ type Employee = {
   role_name: string;
   status: string;
   playbook_id: number | null;
+  writing_style_prompt_override: string | null;
 };
 
 type Playbook = {
@@ -20,6 +21,15 @@ type Playbook = {
   role_name: string;
   primary_audience: string | null;
   recurring_series: string | null;
+};
+
+type LinkedInConnection = {
+  display_name: string;
+  email: string | null;
+  scopes: string;
+  expires_at: string;
+  status: string;
+  connected_at: string;
 };
 
 export async function loader({
@@ -43,6 +53,7 @@ export async function loader({
         e.role_name,
         e.status,
         ep.playbook_id
+        ,e.writing_style_prompt_override
       FROM employees e
       LEFT JOIN employee_playbooks ep
         ON ep.employee_id = e.id
@@ -66,10 +77,30 @@ export async function loader({
       ORDER BY role_name ASC
     `)
     .all<Playbook>();
+  const linkedinConnection = await env.linkedinadam_db
+    .prepare(`
+      SELECT
+        display_name,
+        email,
+        scopes,
+        expires_at,
+        CASE
+          WHEN status = 'active'
+            AND expires_at <= CURRENT_TIMESTAMP
+          THEN 'expired'
+          ELSE status
+        END AS status,
+        connected_at
+      FROM linkedin_connections
+      WHERE employee_id = ?
+    `)
+    .bind(employeeId)
+    .first<LinkedInConnection>();
 
   return {
     employee,
     playbooks: playbookQuery.results ?? [],
+    linkedinConnection,
   };
 }
 
@@ -86,10 +117,34 @@ export async function action({
     throw new Response("Invalid employee ID", { status: 400 });
   }
 
+  const intent = String(
+    formData.get("intent") ?? "update_employee",
+  );
+
+  if (intent === "disconnect_linkedin") {
+    await env.linkedinadam_db
+      .prepare(`
+        UPDATE linkedin_connections
+        SET
+          status = 'revoked',
+          access_token_ciphertext = '',
+          access_token_iv = '',
+          updated_at = CURRENT_TIMESTAMP
+        WHERE employee_id = ?
+      `)
+      .bind(employeeId)
+      .run();
+
+    return redirect(`/employees/${employeeId}?linkedin=disconnected`);
+  }
+
   const name = String(formData.get("name") ?? "").trim();
   const email = String(formData.get("email") ?? "").trim();
   const linkedinProfileUrl = String(
     formData.get("linkedin_profile_url") ?? "",
+  ).trim();
+  const writingStylePromptOverride = String(
+    formData.get("writing_style_prompt_override") ?? "",
   ).trim();
   const status = String(formData.get("status") ?? "active");
   const playbookId = Number(formData.get("playbook_id"));
@@ -97,6 +152,13 @@ export async function action({
   if (!name) {
     return {
       error: "Employee name is required.",
+    };
+  }
+
+  if (writingStylePromptOverride.length > 4000) {
+    return {
+      error:
+        "Employee writing-style instructions must be 4,000 characters or fewer.",
     };
   }
 
@@ -131,6 +193,7 @@ export async function action({
           linkedin_profile_url = ?,
           role_name = ?,
           status = ?,
+          writing_style_prompt_override = ?,
           updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `)
@@ -140,6 +203,7 @@ export async function action({
         linkedinProfileUrl || null,
         selectedPlaybook.role_name,
         status,
+        writingStylePromptOverride || null,
         employeeId,
       ),
 
@@ -166,7 +230,7 @@ export default function EditEmployee({
   loaderData,
   actionData,
 }: Route.ComponentProps) {
-  const { employee, playbooks } = loaderData;
+  const { employee, playbooks, linkedinConnection } = loaderData;
 
   return (
     <main className="edit-page">
@@ -254,6 +318,23 @@ export default function EditEmployee({
               </select>
             </label>
 
+            <label className="employee-form-wide">
+              Employee-specific AI writing style
+              <textarea
+                name="writing_style_prompt_override"
+                defaultValue={
+                  employee.writing_style_prompt_override ?? ""
+                }
+                rows={7}
+                maxLength={4000}
+                placeholder="Optional override for this employee. Leave blank to inherit the assigned playbook’s writing style."
+              />
+              <small>
+                This overrides the playbook style only for{" "}
+                {employee.name}.
+              </small>
+            </label>
+
             {actionData?.error ? (
               <p className="form-error">
                 {actionData.error}
@@ -271,6 +352,65 @@ export default function EditEmployee({
               </Link>
             </div>
           </Form>
+        </section>
+
+        <section className="panel linkedin-connection-panel">
+          <p className="eyebrow">LINKEDIN PUBLISHING</p>
+          <h2>Member connection</h2>
+
+          {linkedinConnection ? (
+            <>
+              <div className="linkedin-connection-summary">
+                <div>
+                  <strong>{linkedinConnection.display_name}</strong>
+                  <span>
+                    {linkedinConnection.email ||
+                      "Email not returned by LinkedIn"}
+                  </span>
+                </div>
+                <span
+                  className={`connection-status ${linkedinConnection.status}`}
+                >
+                  {linkedinConnection.status}
+                </span>
+              </div>
+              <p>
+                Expires {linkedinConnection.expires_at}. LinkedIn may
+                require reconnection when this token expires.
+              </p>
+              <div className="linkedin-connection-actions">
+                <a
+                  className="button-link"
+                  href={`/auth/linkedin/start?employee=${employee.id}`}
+                >
+                  Reconnect LinkedIn
+                </a>
+                <Form method="post">
+                  <input
+                    type="hidden"
+                    name="intent"
+                    value="disconnect_linkedin"
+                  />
+                  <button type="submit" className="secondary">
+                    Disconnect
+                  </button>
+                </Form>
+              </div>
+            </>
+          ) : (
+            <>
+              <p>
+                Connect the LinkedIn member who owns this employee
+                profile. LinkedIn will show its own consent screen.
+              </p>
+              <a
+                className="button-link"
+                href={`/auth/linkedin/start?employee=${employee.id}`}
+              >
+                Connect LinkedIn
+              </a>
+            </>
+          )}
         </section>
 
         <section className="panel">

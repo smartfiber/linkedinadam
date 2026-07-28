@@ -63,6 +63,22 @@ body {
   margin-bottom: 28px;
 }
 
+.header-actions {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.secondary-link {
+  padding: 11px 16px;
+  border: 1px solid #d8e0eb;
+  border-radius: 9px;
+  color: #344057;
+  font-weight: 700;
+  text-decoration: none;
+  background: white;
+}
+
 .eyebrow {
   margin: 0 0 8px;
   color: #1675e7;
@@ -324,7 +340,8 @@ button.secondary {
   font-weight: 700;
 }
 
-.employee-form input {
+.employee-form input,
+.employee-form textarea {
   width: 100%;
   padding: 12px 13px;
   border: 1px solid #dbe2ec;
@@ -332,6 +349,17 @@ button.secondary {
   color: #172033;
   font: inherit;
   background: #fff;
+}
+
+.employee-form textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.employee-form small {
+  color: #7a8699;
+  font-weight: 400;
+  line-height: 1.45;
 }
 
 .employee-form input:focus {
@@ -392,6 +420,48 @@ button.secondary {
   gap: 20px;
   padding-bottom: 18px;
   border-bottom: 1px solid #edf0f5;
+}
+
+.employee-workspace > summary,
+.draft-card > summary,
+.managed-playbook > summary,
+.dashboard-section > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.employee-workspace > summary::-webkit-details-marker,
+.draft-card > summary::-webkit-details-marker,
+.managed-playbook > summary::-webkit-details-marker,
+.dashboard-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.dashboard-section:not([open]) > summary {
+  margin-bottom: 0;
+}
+
+.dashboard-section[open] > summary {
+  padding-bottom: 16px;
+  border-bottom: 1px solid #edf0f5;
+}
+
+.employee-workspace:not([open]) .playbook-header {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.employee-workspace[open] .playbook-header {
+  margin-bottom: 18px;
+}
+
+.writing-style-preview a {
+  display: inline-block;
+  margin-top: 8px;
+  color: #1675e7;
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
 }
 
 .employee-title-row {
@@ -692,6 +762,262 @@ button.secondary {
   }
 }
 
+.playbooks-page {
+  min-height: 100vh;
+  padding: 42px;
+  background: #f7f9fc;
+}
+
+.playbooks-header,
+.playbook-manager,
+.playbooks-page > .form-error {
+  max-width: 1400px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.playbooks-header {
+  margin-bottom: 24px;
+}
+
+.playbooks-header .back-link {
+  display: inline-block;
+  margin-bottom: 24px;
+  color: #1675e7;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.playbooks-header > p:last-child {
+  max-width: 720px;
+  color: #69758c;
+  line-height: 1.6;
+}
+
+.playbook-manager {
+  display: grid;
+  gap: 14px;
+}
+
+.managed-playbook {
+  margin-bottom: 0;
+}
+
+.managed-playbook > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+}
+
+.managed-playbook > summary strong {
+  font-size: 18px;
+}
+
+.managed-playbook > summary > span {
+  color: #788499;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.managed-playbook[open] > summary {
+  padding-bottom: 18px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid #e7ebf1;
+}
+
+.managed-playbook.create {
+  border-color: #bdd6f5;
+}
+
+.playbook-editor-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px;
+}
+
+.playbook-editor-form label {
+  display: grid;
+  gap: 7px;
+  color: #465168;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.playbook-editor-form input,
+.playbook-editor-form textarea {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+  color: #172033;
+  background: white;
+  font: inherit;
+}
+
+.playbook-editor-form textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.playbook-editor-form small {
+  color: #7b879a;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.playbook-field-wide {
+  grid-column: 1 / -1;
+}
+
+.style-prompt-field textarea {
+  border-color: #a9c9f1;
+  background: #f8fbff;
+}
+
+.playbook-target-editor {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 15px;
+  border-radius: 10px;
+  background: #f4f7fb;
+}
+
+@media (max-width: 800px) {
+  .header,
+  .header-actions,
+  .playbook-header {
+    flex-direction: column;
+  }
+
+  .playbooks-page {
+    padding: 24px 16px;
+  }
+
+  .playbook-editor-form,
+  .playbook-target-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .playbook-field-wide {
+    grid-column: auto;
+  }
+}
+
+.linkedin-connection-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.linkedin-connection-panel > p {
+  margin: 0;
+  color: #68758b;
+  line-height: 1.55;
+}
+
+.linkedin-connection-summary,
+.linkedin-connection-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+}
+
+.linkedin-connection-summary div,
+.linkedin-connection-summary strong,
+.linkedin-connection-summary span {
+  display: block;
+}
+
+.linkedin-connection-summary div span {
+  margin-top: 4px;
+  color: #758196;
+  font-size: 12px;
+}
+
+.connection-status {
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #526078;
+  background: #edf1f7;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.connection-status.active {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.connection-status.expired,
+.connection-status.revoked {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.linkedin-publish-panel {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  padding: 15px;
+  border: 1px solid #dce5f1;
+  border-radius: 11px;
+  background: #f8fbff;
+}
+
+.linkedin-publish-panel > div:first-child strong {
+  display: block;
+  margin-top: 4px;
+}
+
+.linkedin-publish-form,
+.linkedin-resolution-form {
+  display: grid;
+  gap: 9px;
+}
+
+.linkedin-publish-form > input,
+.linkedin-resolution-form > input {
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+  color: #172033;
+  background: white;
+  font: inherit;
+}
+
+.publish-confirmation {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  color: #526078;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.publish-confirmation input {
+  margin-top: 2px;
+}
+
+.linkedin-attempt-status {
+  margin: 0;
+  color: #6c788e;
+  font-size: 11px;
+  text-transform: capitalize;
+}
+
+@media (max-width: 600px) {
+  .linkedin-connection-summary,
+  .linkedin-connection-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .activity-event-panel {
   margin-top: 16px;
   padding: 18px;
@@ -933,6 +1259,12 @@ button:disabled {
   display: flex;
   justify-content: space-between;
   gap: 15px;
+}
+
+.draft-card[open] .draft-card-header {
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid #edf0f5;
 }
 
 .draft-card-header strong {

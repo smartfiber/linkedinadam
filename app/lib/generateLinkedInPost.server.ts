@@ -13,6 +13,7 @@ type GenerateLinkedInPostInput = {
   leadMagnet: string | null;
   softCta: string | null;
   guardrail: string | null;
+  writingStylePrompt: string | null;
 };
 
 export async function generateLinkedInPost(
@@ -68,6 +69,9 @@ ${input.softCta || "End with a thoughtful question."}
 
 Guardrail:
 ${input.guardrail || "Do not make unsupported claims."}
+
+Employee-specific writing style:
+${input.writingStylePrompt || "Use a clear, credible, conversational professional voice."}
 
 Writing requirement:
 ${lengthInstruction}

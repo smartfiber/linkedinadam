@@ -9,6 +9,15 @@ export default [
   route("calendar", "routes/calendar.tsx"),
   route("analytics", "routes/analytics.tsx"),
   route("planner", "routes/planner.tsx"),
+  route("playbooks", "routes/playbooks.tsx"),
+  route(
+    "auth/linkedin/start",
+    "routes/auth.linkedin.start.ts",
+  ),
+  route(
+    "auth/linkedin/callback",
+    "routes/auth.linkedin.callback.tsx",
+  ),
   route(
     "employees/:employeeId",
     "routes/employees.$employeeId.tsx",

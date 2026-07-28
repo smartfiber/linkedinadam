@@ -3,6 +3,12 @@ import type { Route } from "./+types/home";
 import { getSafeOpenAIErrorMessage } from "../lib/aiErrors.server";
 import { generateLinkedInImage } from "../lib/generateLinkedInImage.server";
 import { generateLinkedInPost } from "../lib/generateLinkedInPost.server";
+import { decryptLinkedInToken } from "../lib/linkedinCrypto.server";
+import {
+  getSafeLinkedInErrorMessage,
+  LinkedInAPIError,
+} from "../lib/linkedinErrors.server";
+import { publishLinkedInPost } from "../lib/linkedinPublishing.server";
 import {
   getPublishBlocker,
   normalizeScheduledFor,
@@ -36,12 +42,14 @@ type Employee = {
   qualified_buying_signal: string | null;
   lead_handoff_action: string | null;
   guardrail: string | null;
+  writing_style_prompt: string | null;
 };
 
 type AppEnvironment = {
   linkedinadam_db: D1Database;
   OPENAI_API_KEY?: string;
   LINKEDIN_IMAGES: R2Bucket;
+  LINKEDIN_TOKEN_ENCRYPTION_KEY?: string;
 };
 
 type PlaybookOption = {
@@ -62,11 +70,19 @@ type ContentDraft = {
   approved_at: string | null;
   published_at: string | null;
   linkedin_post_url: string | null;
+  linkedin_post_urn: string | null;
   image_key: string | null;
   image_prompt: string | null;
   image_status: string | null;
   image_mime_type: string | null;
   image_updated_at: string | null;
+  image_alt_text: string | null;
+  linkedin_connection_id: number | null;
+  linkedin_connection_name: string | null;
+  linkedin_connection_status: string | null;
+  linkedin_connection_expires_at: string | null;
+  linkedin_publish_attempt_status: string | null;
+  linkedin_publish_attempt_error: string | null;
   created_at: string;
 };
 
@@ -179,7 +195,11 @@ export async function loader({ context }: Route.LoaderArgs) {
         p.soft_cta,
         p.qualified_buying_signal,
         p.lead_handoff_action,
-        p.guardrail
+        p.guardrail,
+        COALESCE(
+          e.writing_style_prompt_override,
+          p.writing_style_prompt
+        ) AS writing_style_prompt
       FROM employees e
       LEFT JOIN employee_playbooks ep
         ON ep.employee_id = e.id
@@ -209,7 +229,9 @@ export async function loader({ context }: Route.LoaderArgs) {
         p.soft_cta,
         p.qualified_buying_signal,
         p.lead_handoff_action,
-        p.guardrail
+        p.guardrail,
+        p.writing_style_prompt,
+        e.writing_style_prompt_override
       ORDER BY e.name ASC
     `)
     .bind(weekStart, weekStart)
@@ -225,6 +247,15 @@ export async function loader({ context }: Route.LoaderArgs) {
 
   const contentQuery = await env.linkedinadam_db
     .prepare(`
+      WITH latest_linkedin_attempt AS (
+        SELECT
+          a.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY a.content_draft_id
+            ORDER BY a.created_at DESC, a.id DESC
+          ) AS attempt_rank
+        FROM linkedin_publish_attempts a
+      )
       SELECT
         c.id,
         c.employee_id,
@@ -238,15 +269,33 @@ export async function loader({ context }: Route.LoaderArgs) {
         c.approved_at,
         c.published_at,
         c.linkedin_post_url,
+        c.linkedin_post_urn,
         c.image_key,
         c.image_prompt,
         c.image_status,
         c.image_mime_type,
         c.image_updated_at,
+        c.image_alt_text,
+        lc.id AS linkedin_connection_id,
+        lc.display_name AS linkedin_connection_name,
+        CASE
+          WHEN lc.status = 'active'
+            AND lc.expires_at <= CURRENT_TIMESTAMP
+          THEN 'expired'
+          ELSE lc.status
+        END AS linkedin_connection_status,
+        lc.expires_at AS linkedin_connection_expires_at,
+        la.status AS linkedin_publish_attempt_status,
+        la.safe_error_code AS linkedin_publish_attempt_error,
         c.created_at
       FROM content_drafts c
       JOIN employees e
         ON e.id = c.employee_id
+      LEFT JOIN linkedin_connections lc
+        ON lc.employee_id = c.employee_id
+      LEFT JOIN latest_linkedin_attempt la
+        ON la.content_draft_id = c.id
+        AND la.attempt_rank = 1
       ORDER BY
         CASE c.status
           WHEN 'approved' THEN 1
@@ -307,6 +356,405 @@ export async function action({ request, context }: Route.ActionArgs) {
   const env = context.cloudflare.env as unknown as AppEnvironment;
   const formData = await request.formData();
   const intent = String(formData.get("intent") ?? "add_employee");
+
+  if (intent === "publish_to_linkedin") {
+    const draftId = Number(formData.get("draft_id"));
+    const requestedBy = String(
+      formData.get("requested_by") ?? "",
+    ).trim();
+    const confirmed =
+      String(formData.get("confirm_publication") ?? "") === "yes";
+    const imageAltText = String(
+      formData.get("image_alt_text") ?? "",
+    ).trim();
+
+    if (!Number.isInteger(draftId)) {
+      return { error: "Select a valid content draft." };
+    }
+
+    if (!requestedBy) {
+      return { error: "Publisher name is required." };
+    }
+
+    if (!confirmed) {
+      return {
+        error:
+          "Confirm that you intend to publish this approved post publicly on LinkedIn.",
+      };
+    }
+
+    if (!env.LINKEDIN_TOKEN_ENCRYPTION_KEY) {
+      return {
+        error: "LinkedIn token encryption is not configured.",
+      };
+    }
+
+    const draft = await env.linkedinadam_db
+      .prepare(`
+        SELECT
+          c.id,
+          c.employee_id,
+          c.title,
+          c.body,
+          c.post_format,
+          c.status,
+          c.scheduled_for,
+          c.image_key,
+          c.image_status,
+          c.image_mime_type,
+          lc.id AS connection_id,
+          lc.linkedin_person_urn,
+          lc.access_token_ciphertext,
+          lc.access_token_iv,
+          lc.expires_at,
+          lc.status AS connection_status
+        FROM content_drafts c
+        LEFT JOIN linkedin_connections lc
+          ON lc.employee_id = c.employee_id
+        WHERE c.id = ?
+      `)
+      .bind(draftId)
+      .first<{
+        id: number;
+        employee_id: number;
+        title: string | null;
+        body: string;
+        post_format: string | null;
+        status: string;
+        scheduled_for: string | null;
+        image_key: string | null;
+        image_status: string | null;
+        image_mime_type: string | null;
+        connection_id: number | null;
+        linkedin_person_urn: string | null;
+        access_token_ciphertext: string | null;
+        access_token_iv: string | null;
+        expires_at: string | null;
+        connection_status: string | null;
+      }>();
+
+    if (!draft) {
+      return { error: "The content draft could not be found." };
+    }
+
+    const publishBlocker = getPublishBlocker(draft);
+
+    if (publishBlocker) {
+      return { error: publishBlocker };
+    }
+
+    if (
+      !draft.connection_id ||
+      !draft.linkedin_person_urn ||
+      !draft.access_token_ciphertext ||
+      !draft.access_token_iv
+    ) {
+      return {
+        error:
+          "Connect this employee’s LinkedIn account before publishing.",
+      };
+    }
+
+    if (
+      draft.connection_status !== "active" ||
+      !draft.expires_at ||
+      draft.expires_at <=
+        new Date().toISOString().slice(0, 19).replace("T", " ")
+    ) {
+      return {
+        error:
+          "This employee’s LinkedIn connection has expired or was disconnected. Reconnect it before publishing.",
+      };
+    }
+
+    if (draft.image_key && !imageAltText) {
+      return {
+        error:
+          "Add meaningful alt text before publishing an image to LinkedIn.",
+      };
+    }
+
+    let attempt: { id: number } | null;
+
+    try {
+      attempt = await env.linkedinadam_db
+        .prepare(`
+          INSERT INTO linkedin_publish_attempts (
+            content_draft_id,
+            linkedin_connection_id,
+            requested_by,
+            status
+          )
+          VALUES (?, ?, ?, 'pending')
+          RETURNING id
+        `)
+        .bind(draft.id, draft.connection_id, requestedBy)
+        .first<{ id: number }>();
+    } catch (error) {
+      console.error(
+        "LinkedIn publish attempt reservation failed.",
+        error instanceof Error ? error.name : "unknown",
+      );
+
+      return {
+        error:
+          "This draft already has an active, successful, or uncertain LinkedIn publication attempt.",
+      };
+    }
+
+    if (!attempt) {
+      return {
+        error: "The LinkedIn publication attempt could not be created.",
+      };
+    }
+
+    let accessToken: string;
+    let image:
+      | {
+          bytes: ArrayBuffer;
+          mimeType: string;
+          altText: string;
+        }
+      | undefined;
+
+    try {
+      accessToken = await decryptLinkedInToken(
+        draft.access_token_ciphertext,
+        draft.access_token_iv,
+        env.LINKEDIN_TOKEN_ENCRYPTION_KEY,
+      );
+
+      if (draft.image_key) {
+        const storedImage = await env.LINKEDIN_IMAGES.get(
+          draft.image_key,
+        );
+
+        if (!storedImage || !("body" in storedImage)) {
+          throw new Error("approved_image_missing");
+        }
+
+        image = {
+          bytes: await storedImage.arrayBuffer(),
+          mimeType:
+            draft.image_mime_type ||
+            storedImage.httpMetadata?.contentType ||
+            "image/png",
+          altText: imageAltText,
+        };
+      }
+    } catch (error) {
+      console.error(
+        "LinkedIn publication preparation failed.",
+        error instanceof Error ? error.name : "unknown",
+      );
+      await env.linkedinadam_db
+        .prepare(`
+          UPDATE linkedin_publish_attempts
+          SET
+            status = 'failed',
+            safe_error_code = 'preparation_failed',
+            completed_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `)
+        .bind(attempt.id)
+        .run();
+
+      return {
+        error:
+          "The approved image or encrypted LinkedIn connection could not be prepared for publication.",
+      };
+    }
+
+    let linkedinAccepted = false;
+
+    try {
+      const published = await publishLinkedInPost({
+        accessToken,
+        personUrn: draft.linkedin_person_urn,
+        commentary: draft.body,
+        image,
+      });
+      linkedinAccepted = true;
+      const eventType =
+        draft.post_format === "short_post"
+          ? "short_post"
+          : "original_post";
+
+      await env.linkedinadam_db.batch([
+        env.linkedinadam_db
+          .prepare(`
+            UPDATE linkedin_publish_attempts
+            SET
+              status = 'succeeded',
+              linkedin_image_urn = ?,
+              linkedin_post_urn = ?,
+              completed_at = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'pending'
+          `)
+          .bind(
+            published.imageUrn,
+            published.postUrn,
+            attempt.id,
+          ),
+        env.linkedinadam_db
+          .prepare(`
+            UPDATE content_drafts
+            SET
+              status = 'published',
+              published_at = CURRENT_TIMESTAMP,
+              linkedin_post_url = ?,
+              linkedin_post_urn = ?,
+              image_alt_text = ?,
+              updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'approved'
+          `)
+          .bind(
+            published.postUrl,
+            published.postUrn,
+            imageAltText || null,
+            draft.id,
+          ),
+        env.linkedinadam_db
+          .prepare(`
+            INSERT INTO content_review_history (
+              content_draft_id,
+              from_status,
+              to_status,
+              reviewer_name,
+              review_note
+            )
+            VALUES (?, 'approved', 'published', ?,
+              'Published directly through LinkedInAdam')
+          `)
+          .bind(draft.id, requestedBy),
+        env.linkedinadam_db
+          .prepare(`
+            INSERT OR IGNORE INTO activity_events (
+              employee_id,
+              event_type,
+              source,
+              external_action_id,
+              content_url,
+              description,
+              metadata,
+              occurred_at
+            )
+            VALUES (?, ?, 'linkedin', ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          `)
+          .bind(
+            draft.employee_id,
+            eventType,
+            published.postUrn,
+            published.postUrl,
+            draft.title || "Published through LinkedInAdam",
+            JSON.stringify({
+              publication_method: "linkedin_api",
+              publish_attempt_id: attempt.id,
+            }),
+          ),
+      ]);
+
+      return redirect("/#content");
+    } catch (error) {
+      const uncertain =
+        linkedinAccepted ||
+        (error instanceof LinkedInAPIError && error.uncertain);
+      const safeCode =
+        linkedinAccepted
+          ? "publication_recording_failed"
+          : error instanceof LinkedInAPIError
+          ? error.code
+          : "unexpected_error";
+
+      console.error(
+        "LinkedIn publication failed.",
+        safeCode,
+      );
+
+      await env.linkedinadam_db.batch([
+        env.linkedinadam_db
+          .prepare(`
+            UPDATE linkedin_publish_attempts
+            SET
+              status = ?,
+              safe_error_code = ?,
+              completed_at = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'pending'
+          `)
+          .bind(
+            uncertain ? "uncertain" : "failed",
+            safeCode,
+            attempt.id,
+          ),
+        ...(error instanceof LinkedInAPIError &&
+        error.status === 401
+          ? [
+              env.linkedinadam_db
+                .prepare(`
+                  UPDATE linkedin_connections
+                  SET status = 'expired',
+                    updated_at = CURRENT_TIMESTAMP
+                  WHERE id = ?
+                `)
+                .bind(draft.connection_id),
+            ]
+          : []),
+      ]);
+
+      return {
+        error: getSafeLinkedInErrorMessage(error),
+      };
+    }
+  }
+
+  if (intent === "resolve_linkedin_attempt") {
+    const draftId = Number(formData.get("draft_id"));
+    const requestedBy = String(
+      formData.get("requested_by") ?? "",
+    ).trim();
+    const resolutionNote = String(
+      formData.get("resolution_note") ?? "",
+    ).trim();
+
+    if (
+      !Number.isInteger(draftId) ||
+      !requestedBy ||
+      !resolutionNote
+    ) {
+      return {
+        error:
+          "Your name and a verification note are required to resolve an uncertain attempt.",
+      };
+    }
+
+    const result = await env.linkedinadam_db
+      .prepare(`
+        UPDATE linkedin_publish_attempts
+        SET
+          status = 'resolved_not_published',
+          resolution_note = ?,
+          completed_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE content_draft_id = ?
+          AND status = 'uncertain'
+      `)
+      .bind(
+        `${requestedBy}: ${resolutionNote}`,
+        draftId,
+      )
+      .run();
+
+    if (!result.meta.changes) {
+      return {
+        error: "No uncertain LinkedIn attempt was found.",
+      };
+    }
+
+    return redirect("/#content");
+  }
 
   if (intent === "generate_content_image") {
     const draftId = Number(formData.get("draft_id"));
@@ -668,7 +1116,11 @@ export async function action({ request, context }: Route.ActionArgs) {
             p.recurring_series,
             p.lead_magnet,
             p.soft_cta,
-            p.guardrail
+            p.guardrail,
+            COALESCE(
+              e.writing_style_prompt_override,
+              p.writing_style_prompt
+            ) AS writing_style_prompt
           FROM employees e
           LEFT JOIN employee_playbooks ep
             ON ep.employee_id = e.id
@@ -687,6 +1139,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           lead_magnet: string | null;
           soft_cta: string | null;
           guardrail: string | null;
+          writing_style_prompt: string | null;
         }>();
     } catch (error) {
       console.error("Employee generation context lookup failed.", error);
@@ -719,6 +1172,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         leadMagnet: employee.lead_magnet,
         softCta: employee.soft_cta,
         guardrail: employee.guardrail,
+        writingStylePrompt: employee.writing_style_prompt,
       });
     } catch (error) {
       console.error("OpenAI post generation failed.", error);
@@ -943,6 +1397,7 @@ export async function action({ request, context }: Route.ActionArgs) {
             reviewerName,
             reviewNote || null,
           ),
+
       ]);
 
       return redirect("/#content");
@@ -1067,6 +1522,22 @@ export async function action({ request, context }: Route.ActionArgs) {
             draftId,
             reviewerName,
             reviewNote || null,
+          ),
+
+        env.linkedinadam_db
+          .prepare(`
+            UPDATE linkedin_publish_attempts
+            SET
+              status = 'succeeded',
+              resolution_note = ?,
+              completed_at = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+            WHERE content_draft_id = ?
+              AND status = 'uncertain'
+          `)
+          .bind(
+            `Manually verified by ${reviewerName} using ${linkedinPostUrl}`,
+            draftId,
           ),
       ]);
 
@@ -1338,6 +1809,7 @@ export default function Home({
             Dashboard
           </a>
           <a href="#employees">Employees</a>
+          <a href="/playbooks">Playbooks</a>
           <a href="#content">Content</a>
           <a href="/calendar">Calendar</a>
           <a href="/planner">Planner</a>
@@ -1359,9 +1831,14 @@ export default function Home({
             </p>
           </div>
 
-          <a className="button-link" href="#add-employee">
-            Add employee
-          </a>
+          <div className="header-actions">
+            <a className="secondary-link" href="/playbooks">
+              Manage playbooks
+            </a>
+            <a className="button-link" href="#add-employee">
+              Add employee
+            </a>
+          </div>
         </header>
 
         <section className="stats">
@@ -1402,8 +1879,12 @@ export default function Home({
           ) : (
             <div className="playbook-list">
               {employees.map((employee) => (
-                <article className="playbook-card" key={employee.id}>
-                  <div className="playbook-header">
+                <details
+                  className="playbook-card employee-workspace"
+                  key={employee.id}
+                  open={employees.length === 1}
+                >
+                  <summary className="playbook-header">
                     <div>
                       <div className="employee-title-row">
                         <h3>{employee.name}</h3>
@@ -1437,7 +1918,7 @@ export default function Home({
                         Edit employee
                       </a>
                     </div>
-                  </div>
+                  </summary>
 
                   {employee.playbook_id ? (
                     <>
@@ -1588,13 +2069,24 @@ export default function Home({
                         <strong>Guardrail</strong>
                         <p>{employee.guardrail}</p>
                       </div>
+
+                      <div className="strategy-callout writing-style-preview">
+                        <span>AI writing style</span>
+                        <p>
+                          {employee.writing_style_prompt ||
+                            "Default credible, conversational professional voice."}
+                        </p>
+                        <a href="/playbooks">
+                          Edit this playbook’s style →
+                        </a>
+                      </div>
                     </>
                   ) : (
                     <div className="empty-playbook">
                       This employee has not been connected to a playbook yet.
                     </div>
                   )}
-                </article>
+                </details>
               ))}
             </div>
           )}
@@ -1818,8 +2310,8 @@ export default function Home({
                 </div>
               ) : (
                 contentDrafts.map((draft) => (
-                  <article className="draft-card" key={draft.id}>
-                    <div className="draft-card-header">
+                  <details className="draft-card" key={draft.id}>
+                    <summary className="draft-card-header">
                       <div>
                         <strong>
                           {draft.title || "Untitled post"}
@@ -1835,7 +2327,7 @@ export default function Home({
                       <span className={`draft-status ${draft.status}`}>
                         {draft.status}
                       </span>
-                    </div>
+                    </summary>
 
                     {draft.topic ? (
                       <span className="draft-topic">
@@ -2097,6 +2589,131 @@ export default function Home({
                           </button>
                         </Form>
 
+                        <section className="linkedin-publish-panel">
+                          <div>
+                            <span className="eyebrow">
+                              LINKEDIN API
+                            </span>
+                            <strong>
+                              {draft.linkedin_connection_name
+                                ? `Publish as ${draft.linkedin_connection_name}`
+                                : "LinkedIn is not connected"}
+                            </strong>
+                          </div>
+
+                          {draft.linkedin_connection_status ===
+                          "active" ? (
+                            <Form
+                              method="post"
+                              className="linkedin-publish-form"
+                            >
+                              <input
+                                type="hidden"
+                                name="intent"
+                                value="publish_to_linkedin"
+                              />
+                              <input
+                                type="hidden"
+                                name="draft_id"
+                                value={draft.id}
+                              />
+                              <input
+                                name="requested_by"
+                                defaultValue="Adam Copenhaver"
+                                placeholder="Publisher name"
+                                required
+                              />
+                              {draft.image_key ? (
+                                <input
+                                  name="image_alt_text"
+                                  defaultValue={
+                                    draft.image_alt_text ?? ""
+                                  }
+                                  placeholder="Describe the image for screen readers"
+                                  maxLength={4086}
+                                  required
+                                />
+                              ) : null}
+                              <label className="publish-confirmation">
+                                <input
+                                  type="checkbox"
+                                  name="confirm_publication"
+                                  value="yes"
+                                  required
+                                />
+                                Publish this approved post publicly on
+                                LinkedIn now
+                              </label>
+                              <button
+                                type="submit"
+                                disabled={
+                                  isSubmitting ||
+                                  ["pending", "uncertain", "succeeded"].includes(
+                                    draft.linkedin_publish_attempt_status ??
+                                      "",
+                                  )
+                                }
+                              >
+                                {isSubmitting
+                                  ? "Publishing…"
+                                  : "Publish to LinkedIn"}
+                              </button>
+                            </Form>
+                          ) : (
+                            <a
+                              className="edit-draft-link"
+                              href={`/employees/${draft.employee_id}`}
+                            >
+                              {draft.linkedin_connection_status
+                                ? "Reconnect LinkedIn"
+                                : "Connect LinkedIn"}
+                            </a>
+                          )}
+
+                          {draft.linkedin_publish_attempt_status ? (
+                            <p className="linkedin-attempt-status">
+                              Latest attempt:{" "}
+                              {draft.linkedin_publish_attempt_status}
+                            </p>
+                          ) : null}
+
+                          {draft.linkedin_publish_attempt_status ===
+                          "uncertain" ? (
+                            <Form
+                              method="post"
+                              className="linkedin-resolution-form"
+                            >
+                              <input
+                                type="hidden"
+                                name="intent"
+                                value="resolve_linkedin_attempt"
+                              />
+                              <input
+                                type="hidden"
+                                name="draft_id"
+                                value={draft.id}
+                              />
+                              <input
+                                name="requested_by"
+                                placeholder="Verifier name"
+                                required
+                              />
+                              <input
+                                name="resolution_note"
+                                placeholder="How you confirmed no post exists"
+                                required
+                              />
+                              <button
+                                type="submit"
+                                className="secondary"
+                                disabled={isSubmitting}
+                              >
+                                Confirm no post was created
+                              </button>
+                            </Form>
+                          ) : null}
+                        </section>
+
                         <Form
                           method="post"
                           className="publish-form"
@@ -2203,15 +2820,15 @@ export default function Home({
                           ))
                       )}
                     </div>
-                  </article>
+                  </details>
                 ))
               )}
             </div>
           </div>
         </section>
 
-        <section className="panel" id="activity">
-          <div className="panel-heading">
+        <details className="panel dashboard-section" id="activity">
+          <summary className="panel-heading">
             <div>
               <p className="eyebrow">ACTIVITY HISTORY</p>
               <h2>Recent employee activity</h2>
@@ -2220,7 +2837,7 @@ export default function Home({
             <span className="activity-count">
               {recentActivities.length} recent events
             </span>
-          </div>
+          </summary>
 
           {recentActivities.length === 0 ? (
             <div className="empty-state">
@@ -2301,15 +2918,15 @@ export default function Home({
               })}
             </div>
           )}
-        </section>
+        </details>
 
-        <section className="panel" id="agents">
-          <div className="panel-heading">
+        <details className="panel dashboard-section" id="agents">
+          <summary className="panel-heading">
             <div>
               <p className="eyebrow">AI WORKFORCE</p>
               <h2>LinkedInAdam agents</h2>
             </div>
-          </div>
+          </summary>
 
           <div className="agent-grid">
             {agents.map((agent) => (
@@ -2320,7 +2937,7 @@ export default function Home({
               </article>
             ))}
           </div>
-        </section>
+        </details>
       </section>
     </main>
   );
