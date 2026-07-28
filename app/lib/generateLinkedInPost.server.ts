@@ -8,6 +8,9 @@ type GenerateLinkedInPostInput = {
   postFormat: "original_post" | "short_post";
   primaryAudience: string | null;
   primaryExpertise: string | null;
+  contentSources: string | null;
+  primaryPostFormats: string | null;
+  exampleTopics: string | null;
   positioningStatement: string | null;
   recurringSeries: string | null;
   leadMagnet: string | null;
@@ -54,6 +57,15 @@ ${input.primaryAudience || "Not specified"}
 
 Primary expertise:
 ${input.primaryExpertise || "Not specified"}
+
+Approved content sources:
+${input.contentSources || "Use the employee’s verified professional experience and public sources."}
+
+Preferred post formats:
+${input.primaryPostFormats || "Text posts"}
+
+Example topic territory:
+${input.exampleTopics || "Not specified"}
 
 Positioning:
 ${input.positioningStatement || "Not specified"}

@@ -8,6 +8,7 @@ type AppEnvironment = {
 type Playbook = {
   id: number;
   role_name: string;
+  relationship_type: string | null;
   primary_audience: string | null;
   secondary_audience: string | null;
   primary_expertise: string | null;
@@ -18,28 +19,49 @@ type Playbook = {
   weekly_short_posts: number;
   weekly_meaningful_comments: number;
   weekly_new_connections: number;
+  monthly_long_form_asset: string | null;
+  content_sources: string | null;
+  primary_post_formats: string | null;
+  example_topics: string | null;
   lead_magnet: string | null;
   soft_cta: string | null;
   qualified_buying_signal: string | null;
   lead_handoff_action: string | null;
+  cross_team_collaboration: string | null;
+  ninety_day_audience_goal: string | null;
+  ninety_day_content_goal: string | null;
+  primary_kpi: string | null;
+  secondary_kpi: string | null;
   guardrail: string | null;
   writing_style_prompt: string | null;
   employee_count: number;
 };
 
 const textFields = [
+  ["relationship_type", "Relationship type"],
   ["primary_audience", "Primary audience"],
   ["secondary_audience", "Secondary audience"],
   ["primary_expertise", "Primary expertise"],
   ["core_buyer_problem", "Core buyer problem"],
   ["positioning_statement", "Positioning statement"],
   ["recurring_series", "Recurring series"],
+  ["monthly_long_form_asset", "Monthly long-form asset"],
+  ["content_sources", "Content sources"],
+  ["primary_post_formats", "Primary post formats"],
+  ["example_topics", "Example topics"],
   ["lead_magnet", "Lead magnet"],
   ["soft_cta", "Soft CTA"],
   ["qualified_buying_signal", "Qualified buying signal"],
   ["lead_handoff_action", "Lead handoff action"],
+  ["cross_team_collaboration", "Cross-team collaboration"],
+  ["ninety_day_audience_goal", "90-day audience goal"],
+  ["ninety_day_content_goal", "90-day content goal"],
+  ["primary_kpi", "Primary KPI"],
+  ["secondary_kpi", "Secondary KPI"],
   ["guardrail", "Guardrail"],
 ] as const;
+
+const textColumnNames = textFields.map(([field]) => field);
 
 const targetFields = [
   ["weekly_original_posts", "Original posts"],
@@ -120,36 +142,27 @@ export async function action({
 
   try {
     if (intent === "create_playbook") {
+      const columns = textColumnNames.join(", ");
+      const placeholders = textColumnNames.map(() => "?").join(", ");
+
       await env.linkedinadam_db
         .prepare(`
           INSERT INTO playbooks (
             role_name,
-            primary_audience,
-            secondary_audience,
-            primary_expertise,
-            core_buyer_problem,
-            positioning_statement,
-            recurring_series,
+            ${columns},
             weekly_original_posts,
             weekly_short_posts,
             weekly_meaningful_comments,
             weekly_new_connections,
-            lead_magnet,
-            soft_cta,
-            qualified_buying_signal,
-            lead_handoff_action,
-            guardrail,
             writing_style_prompt,
             updated_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-            CURRENT_TIMESTAMP)
+          VALUES (?, ${placeholders}, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         `)
         .bind(
           roleName,
-          ...values.slice(0, 6),
+          ...values,
           ...targets,
-          ...values.slice(6),
           writingStylePrompt || null,
         )
         .run();
@@ -157,35 +170,28 @@ export async function action({
       intent === "update_playbook" &&
       Number.isInteger(playbookId)
     ) {
+      const assignments = textColumnNames
+        .map((column) => `${column} = ?`)
+        .join(", ");
+
       await env.linkedinadam_db
         .prepare(`
           UPDATE playbooks
           SET
             role_name = ?,
-            primary_audience = ?,
-            secondary_audience = ?,
-            primary_expertise = ?,
-            core_buyer_problem = ?,
-            positioning_statement = ?,
-            recurring_series = ?,
+            ${assignments},
             weekly_original_posts = ?,
             weekly_short_posts = ?,
             weekly_meaningful_comments = ?,
             weekly_new_connections = ?,
-            lead_magnet = ?,
-            soft_cta = ?,
-            qualified_buying_signal = ?,
-            lead_handoff_action = ?,
-            guardrail = ?,
             writing_style_prompt = ?,
             updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `)
         .bind(
           roleName,
-          ...values.slice(0, 6),
+          ...values,
           ...targets,
-          ...values.slice(6),
           writingStylePrompt || null,
           playbookId,
         )

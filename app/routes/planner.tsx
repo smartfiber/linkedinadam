@@ -31,6 +31,9 @@ type PlannerEmployee = {
   role_name: string;
   primary_audience: string | null;
   primary_expertise: string | null;
+  content_sources: string | null;
+  primary_post_formats: string | null;
+  example_topics: string | null;
   positioning_statement: string | null;
   recurring_series: string | null;
   weekly_original_posts: number;
@@ -101,6 +104,9 @@ export async function loader({
         e.role_name,
         p.primary_audience,
         p.primary_expertise,
+        p.content_sources,
+        p.primary_post_formats,
+        p.example_topics,
         p.positioning_statement,
         p.recurring_series,
         COALESCE(p.weekly_original_posts, 0)
@@ -265,6 +271,9 @@ export async function action({
           e.role_name,
           p.primary_audience,
           p.primary_expertise,
+          p.content_sources,
+          p.primary_post_formats,
+          p.example_topics,
           p.positioning_statement,
           p.recurring_series,
           COALESCE(p.weekly_original_posts, 0)
@@ -391,6 +400,9 @@ export async function action({
         shortPostTarget: employee.weekly_short_posts,
         primaryAudience: employee.primary_audience,
         primaryExpertise: employee.primary_expertise,
+        contentSources: employee.content_sources,
+        primaryPostFormats: employee.primary_post_formats,
+        exampleTopics: employee.example_topics,
         positioningStatement: employee.positioning_statement,
         recurringSeries: employee.recurring_series,
         softCta: employee.soft_cta,

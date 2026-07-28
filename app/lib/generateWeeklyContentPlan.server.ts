@@ -13,6 +13,9 @@ type GenerateWeeklyContentPlanInput = {
   shortPostTarget: number;
   primaryAudience: string | null;
   primaryExpertise: string | null;
+  contentSources: string | null;
+  primaryPostFormats: string | null;
+  exampleTopics: string | null;
   positioningStatement: string | null;
   recurringSeries: string | null;
   softCta: string | null;
@@ -51,6 +54,9 @@ Total items required: ${totalPosts}
 
 Audience: ${input.primaryAudience || "Not specified"}
 Expertise: ${input.primaryExpertise || "Not specified"}
+Approved content sources: ${input.contentSources || "Verified experience and public sources"}
+Preferred post formats: ${input.primaryPostFormats || "Text posts"}
+Example topic territory: ${input.exampleTopics || "Not specified"}
 Positioning: ${input.positioningStatement || "Not specified"}
 Recurring series: ${input.recurringSeries || "Not specified"}
 Soft CTA: ${input.softCta || "Not specified"}
