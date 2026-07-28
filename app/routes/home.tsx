@@ -96,6 +96,15 @@ type ContentReviewHistory = {
   created_at: string;
 };
 
+type DailyHomeDraft = {
+  id: number;
+  employee_name: string;
+  title: string | null;
+  body: string;
+  status: string;
+  scheduled_for: string;
+};
+
 type ActivityEvent = {
   id: number;
   employee_name: string;
@@ -149,6 +158,21 @@ function getCurrentWeekStart() {
   now.setUTCDate(now.getUTCDate() - daysSinceMonday);
 
   return now.toISOString().slice(0, 10);
+}
+
+function getCurrentChicagoDate() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+function addDateDays(value: string, days: number) {
+  const date = new Date(`${value}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 export async function loader({ context }: Route.LoaderArgs) {
@@ -341,6 +365,26 @@ export async function loader({ context }: Route.LoaderArgs) {
       LIMIT 25
     `)
     .all<ActivityEvent>();
+  const today = getCurrentChicagoDate();
+  const dayAfterTomorrow = addDateDays(today, 2);
+  const dailyQuery = await env.linkedinadam_db
+    .prepare(`
+      SELECT
+        c.id,
+        e.name AS employee_name,
+        c.title,
+        c.body,
+        c.status,
+        c.scheduled_for
+      FROM content_drafts c
+      JOIN employees e ON e.id = c.employee_id
+      WHERE c.scheduled_for >= ?
+        AND c.scheduled_for < ?
+        AND e.status = 'active'
+      ORDER BY c.scheduled_for, e.name
+    `)
+    .bind(`${today}T00:00`, `${dayAfterTomorrow}T00:00`)
+    .all<DailyHomeDraft>();
 
   return {
     employees: employeeQuery.results ?? [],
@@ -348,6 +392,9 @@ export async function loader({ context }: Route.LoaderArgs) {
     recentActivities: activityQuery.results ?? [],
     contentDrafts: contentQuery.results ?? [],
     reviewHistory: reviewHistoryQuery.results ?? [],
+    dailyDrafts: dailyQuery.results ?? [],
+    today,
+    tomorrow: addDateDays(today, 1),
     weekStart,
   };
 }
@@ -1789,6 +1836,9 @@ export default function Home({
   const recentActivities = loaderData.recentActivities;
   const contentDrafts = loaderData.contentDrafts;
   const reviewHistory = loaderData.reviewHistory;
+  const dailyDrafts = loaderData.dailyDrafts;
+  const today = loaderData.today;
+  const tomorrow = loaderData.tomorrow;
   const weekStart = loaderData.weekStart;
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
@@ -1820,6 +1870,7 @@ export default function Home({
           <a href="#employees">Employees</a>
           <a href="/playbooks">Playbooks</a>
           <a href="/connections">Connections</a>
+          <a href="/operations">Today &amp; Tomorrow</a>
           <a href="#content">Content</a>
           <a href="/calendar">Calendar</a>
           <a href="/planner">Planner</a>
@@ -1842,6 +1893,9 @@ export default function Home({
           </div>
 
           <div className="header-actions">
+            <a className="button-link" href="/operations">
+              Daily operations
+            </a>
             <a className="secondary-link" href="/connections">
               Review connections
             </a>
@@ -1853,6 +1907,60 @@ export default function Home({
             </a>
           </div>
         </header>
+
+        <section className="dashboard-daily panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">TODAY &amp; TOMORROW</p>
+              <h2>Daily post queue</h2>
+            </div>
+            <a className="secondary-link" href="/operations">
+              Open full operations dashboard
+            </a>
+          </div>
+          <div className="dashboard-daily-grid">
+            {[
+              ["Today", today],
+              ["Tomorrow", tomorrow],
+            ].map(([label, date]) => {
+              const drafts = dailyDrafts.filter((draft) =>
+                draft.scheduled_for.startsWith(date),
+              );
+
+              return (
+                <div key={date}>
+                  <h3>{label}</h3>
+                  <span>{date}</span>
+                  {drafts.length ? (
+                    drafts.map((draft) => (
+                      <details key={draft.id}>
+                        <summary>
+                          <div>
+                            <strong>{draft.employee_name}</strong>
+                            <span>
+                              {draft.title || "Untitled post"} ·{" "}
+                              {draft.status}
+                            </span>
+                          </div>
+                          <span>{draft.scheduled_for.slice(11)}</span>
+                        </summary>
+                        <p>
+                          {draft.body ||
+                            "Post copy has not been generated yet."}
+                        </p>
+                        <a href={`/content/${draft.id}/edit`}>
+                          Edit post
+                        </a>
+                      </details>
+                    ))
+                  ) : (
+                    <p>No posts scheduled.</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
 
         <section className="stats">
           <article>

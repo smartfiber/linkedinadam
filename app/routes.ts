@@ -11,6 +11,7 @@ export default [
   route("planner", "routes/planner.tsx"),
   route("playbooks", "routes/playbooks.tsx"),
   route("connections", "routes/connections.tsx"),
+  route("operations", "routes/operations.tsx"),
   route(
     "auth/linkedin/start",
     "routes/auth.linkedin.start.ts",

@@ -1,4 +1,5 @@
 import { createRequestHandler } from "react-router";
+import { runAutopilotCycle } from "../app/lib/autopilot.server";
 
 declare module "react-router" {
   export interface AppLoadContext {
@@ -69,5 +70,8 @@ export default {
     return requestHandler(request, {
       cloudflare: { env, ctx },
     });
+  },
+  async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(runAutopilotCycle(env));
   },
 } satisfies ExportedHandler<Env>;

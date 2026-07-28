@@ -15,6 +15,7 @@ import {
 import { refreshContentPlanStatus } from "../lib/contentPlanner.server";
 import { findScheduleConflict } from "../lib/contentWorkflow.server";
 import { generateWeeklyContentPlan } from "../lib/generateWeeklyContentPlan.server";
+import { generateLinkedInPost } from "../lib/generateLinkedInPost.server";
 import {
   buildContentInsights,
   type MeasuredPost,
@@ -70,6 +71,10 @@ type ContentPlanItem = {
   reviewed_by: string | null;
   review_note: string | null;
   content_draft_id: number | null;
+  generated_body: string | null;
+  generated_model: string | null;
+  generated_at: string | null;
+  generation_error: string | null;
 };
 
 type ItemHistory = {
@@ -190,7 +195,11 @@ export async function loader({
             status,
             reviewed_by,
             review_note,
-            content_draft_id
+            content_draft_id,
+            generated_body,
+            generated_model,
+            generated_at,
+            generation_error
           FROM content_plan_items
           WHERE content_plan_id IN (${placeholders})
           ORDER BY content_plan_id DESC, sequence
@@ -561,8 +570,10 @@ export async function action({
         i.post_format,
         i.topic,
         i.angle,
+        i.rationale,
         i.suggested_scheduled_for,
         i.status,
+        i.generated_body,
         p.employee_id,
         p.week_start,
         p.status AS plan_status
@@ -577,8 +588,10 @@ export async function action({
       post_format: string;
       topic: string;
       angle: string;
+      rationale: string;
       suggested_scheduled_for: string;
       status: string;
+      generated_body: string | null;
       employee_id: number;
       week_start: string;
       plan_status: string;
@@ -590,6 +603,108 @@ export async function action({
 
   if (item.plan_status === "superseded") {
     return { error: "Superseded plans cannot be changed." };
+  }
+
+  if (intent === "generate_item_body") {
+    if (!env.OPENAI_API_KEY) {
+      return { error: "The OpenAI API key is not configured." };
+    }
+
+    const employee = await env.linkedinadam_db
+      .prepare(`
+        SELECT
+          e.name,
+          e.role_name,
+          p.primary_audience,
+          p.primary_expertise,
+          p.content_sources,
+          p.primary_post_formats,
+          p.example_topics,
+          p.positioning_statement,
+          p.recurring_series,
+          p.lead_magnet,
+          p.soft_cta,
+          p.guardrail,
+          COALESCE(
+            e.writing_style_prompt_override,
+            p.writing_style_prompt
+          ) AS writing_style_prompt
+        FROM employees e
+        JOIN employee_playbooks ep ON ep.employee_id = e.id
+        JOIN playbooks p ON p.id = ep.playbook_id
+        WHERE e.id = ? AND e.status = 'active'
+      `)
+      .bind(employeeId)
+      .first<{
+        name: string;
+        role_name: string;
+        primary_audience: string | null;
+        primary_expertise: string | null;
+        content_sources: string | null;
+        primary_post_formats: string | null;
+        example_topics: string | null;
+        positioning_statement: string | null;
+        recurring_series: string | null;
+        lead_magnet: string | null;
+        soft_cta: string | null;
+        guardrail: string | null;
+        writing_style_prompt: string | null;
+      }>();
+
+    if (!employee) {
+      return { error: "The employee or playbook could not be found." };
+    }
+
+    try {
+      const generatedBody = await generateLinkedInPost({
+        apiKey: env.OPENAI_API_KEY,
+        employeeName: employee.name,
+        roleName: employee.role_name,
+        topic:
+          `${item.topic}\nAngle: ${item.angle}\nPlanning rationale: ${item.rationale}`,
+        postFormat: item.post_format as
+          | "original_post"
+          | "short_post",
+        primaryAudience: employee.primary_audience,
+        primaryExpertise: employee.primary_expertise,
+        contentSources: employee.content_sources,
+        primaryPostFormats: employee.primary_post_formats,
+        exampleTopics: employee.example_topics,
+        positioningStatement: employee.positioning_statement,
+        recurringSeries: employee.recurring_series,
+        leadMagnet: employee.lead_magnet,
+        softCta: employee.soft_cta,
+        guardrail: employee.guardrail,
+        writingStylePrompt: employee.writing_style_prompt,
+      });
+
+      await env.linkedinadam_db
+        .prepare(`
+          UPDATE content_plan_items
+          SET
+            generated_body = ?,
+            generated_model = 'gpt-5-mini',
+            generated_at = CURRENT_TIMESTAMP,
+            generation_error = NULL,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `)
+        .bind(generatedBody, item.id)
+        .run();
+    } catch (error) {
+      const safeError = getSafeOpenAIErrorMessage(error, "post");
+      await env.linkedinadam_db
+        .prepare(`
+          UPDATE content_plan_items
+          SET generation_error = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `)
+        .bind(safeError, item.id)
+        .run();
+      return { error: safeError };
+    }
+
+    return redirect(returnTo);
   }
 
   if (intent === "review_item") {
@@ -678,12 +793,13 @@ export async function action({
             status,
             scheduled_for
           )
-          VALUES (?, ?, '', ?, ?, 'draft', ?)
+          VALUES (?, ?, ?, ?, ?, 'draft', ?)
           RETURNING id
         `)
         .bind(
           employeeId,
           item.topic,
+          item.generated_body || "",
           item.post_format,
           item.topic,
           item.suggested_scheduled_for,
@@ -943,6 +1059,52 @@ export default function Planner({
                             <strong>Suggested:</strong>{" "}
                             {item.suggested_scheduled_for} CT
                           </p>
+
+                          {item.generated_body ? (
+                            <details className="plan-full-post" open>
+                              <summary>Full generated post</summary>
+                              <p>{item.generated_body}</p>
+                            </details>
+                          ) : (
+                            <p className="plan-missing-copy">
+                              Full post copy has not been generated.
+                            </p>
+                          )}
+
+                          {item.status !== "converted" ? (
+                            <Form method="post">
+                              <input
+                                type="hidden"
+                                name="intent"
+                                value="generate_item_body"
+                              />
+                              <input
+                                type="hidden"
+                                name="employee_id"
+                                value={selectedEmployee.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="week_start"
+                                value={weekStart}
+                              />
+                              <input
+                                type="hidden"
+                                name="item_id"
+                                value={item.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="actor_name"
+                                value="Adam Copenhaver"
+                              />
+                              <button type="submit" disabled={isSubmitting}>
+                                {item.generated_body
+                                  ? "Regenerate full post"
+                                  : "Generate full post"}
+                              </button>
+                            </Form>
+                          ) : null}
 
                           {plan.status !== "superseded" &&
                           item.status !== "converted" ? (

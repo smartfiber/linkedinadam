@@ -10,6 +10,11 @@
     "enabled": true
   },
   "upload_source_maps": true,
+  "triggers": {
+    "crons": [
+      "*/15 * * * *"
+    ]
+  },
   "vars": {
     "VALUE_FROM_CLOUDFLARE": "Hello from Cloudflare"
   },

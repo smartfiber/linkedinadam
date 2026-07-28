@@ -3,6 +3,7 @@ import type { Route } from "./+types/employees.$employeeId";
 
 type AppEnvironment = {
   linkedinadam_db: D1Database;
+  LINKEDIN_IMAGES: R2Bucket;
 };
 
 type Employee = {
@@ -30,6 +31,14 @@ type LinkedInConnection = {
   expires_at: string;
   status: string;
   connected_at: string;
+};
+
+type EmployeeRecordCounts = {
+  content_drafts: number;
+  content_plans: number;
+  connection_recommendations: number;
+  conversations: number;
+  activity_events: number;
 };
 
 export async function loader({
@@ -96,11 +105,40 @@ export async function loader({
     `)
     .bind(employeeId)
     .first<LinkedInConnection>();
+  const recordCounts = await env.linkedinadam_db
+    .prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM content_drafts
+          WHERE employee_id = ?) AS content_drafts,
+        (SELECT COUNT(*) FROM content_plans
+          WHERE employee_id = ?) AS content_plans,
+        (SELECT COUNT(*) FROM connection_recommendations
+          WHERE employee_id = ?) AS connection_recommendations,
+        (SELECT COUNT(*) FROM conversations
+          WHERE employee_id = ?) AS conversations,
+        (SELECT COUNT(*) FROM activity_events
+          WHERE employee_id = ?) AS activity_events
+    `)
+    .bind(
+      employeeId,
+      employeeId,
+      employeeId,
+      employeeId,
+      employeeId,
+    )
+    .first<EmployeeRecordCounts>();
 
   return {
     employee,
     playbooks: playbookQuery.results ?? [],
     linkedinConnection,
+    recordCounts: recordCounts ?? {
+      content_drafts: 0,
+      content_plans: 0,
+      connection_recommendations: 0,
+      conversations: 0,
+      activity_events: 0,
+    },
   };
 }
 
@@ -120,6 +158,161 @@ export async function action({
   const intent = String(
     formData.get("intent") ?? "update_employee",
   );
+
+  if (intent === "archive_employee" || intent === "restore_employee") {
+    const actorName = String(
+      formData.get("actor_name") ?? "",
+    ).trim();
+
+    if (!actorName) {
+      return { error: "Your name is required for the audit trail." };
+    }
+
+    await env.linkedinadam_db
+      .prepare(`
+        UPDATE employees
+        SET status = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `)
+      .bind(
+        intent === "archive_employee" ? "inactive" : "active",
+        employeeId,
+      )
+      .run();
+
+    return redirect(
+      `/employees/${employeeId}?employee=${
+        intent === "archive_employee" ? "archived" : "restored"
+      }`,
+    );
+  }
+
+  if (intent === "delete_employee") {
+    const employee = await env.linkedinadam_db
+      .prepare(`
+        SELECT name, email, role_name
+        FROM employees
+        WHERE id = ?
+      `)
+      .bind(employeeId)
+      .first<{
+        name: string;
+        email: string | null;
+        role_name: string;
+      }>();
+    const confirmation = String(
+      formData.get("confirmation") ?? "",
+    );
+    const actorName = String(
+      formData.get("actor_name") ?? "",
+    ).trim();
+
+    if (!employee) {
+      return { error: "The employee no longer exists." };
+    }
+
+    if (!actorName || confirmation !== employee.name) {
+      return {
+        error:
+          "Enter your name and type the employee’s exact name to permanently delete them.",
+      };
+    }
+
+    const counts = await env.linkedinadam_db
+      .prepare(`
+        SELECT
+          (SELECT COUNT(*) FROM content_drafts
+            WHERE employee_id = ?) AS content_drafts,
+          (SELECT COUNT(*) FROM content_plans
+            WHERE employee_id = ?) AS content_plans,
+          (SELECT COUNT(*) FROM connection_recommendations
+            WHERE employee_id = ?) AS connection_recommendations,
+          (SELECT COUNT(*) FROM conversations
+            WHERE employee_id = ?) AS conversations,
+          (SELECT COUNT(*) FROM activity_events
+            WHERE employee_id = ?) AS activity_events
+      `)
+      .bind(
+        employeeId,
+        employeeId,
+        employeeId,
+        employeeId,
+        employeeId,
+      )
+      .first<EmployeeRecordCounts>();
+    const images = await env.linkedinadam_db
+      .prepare(`
+        SELECT image_key
+        FROM content_drafts
+        WHERE employee_id = ? AND image_key IS NOT NULL
+      `)
+      .bind(employeeId)
+      .all<{ image_key: string }>();
+
+    try {
+      const imageKeys = (images.results ?? []).map(
+        (row) => row.image_key,
+      );
+
+      await env.linkedinadam_db.batch([
+        env.linkedinadam_db
+          .prepare(`
+            INSERT INTO employee_deletion_audit (
+              employee_name,
+              employee_email,
+              role_name,
+              deleted_by,
+              record_counts
+            )
+            VALUES (?, ?, ?, ?, ?)
+          `)
+          .bind(
+            employee.name,
+            employee.email,
+            employee.role_name,
+            actorName,
+            JSON.stringify(counts ?? {}),
+          ),
+        env.linkedinadam_db
+          .prepare(`
+            DELETE FROM linkedin_publish_attempts
+            WHERE content_draft_id IN (
+              SELECT id FROM content_drafts WHERE employee_id = ?
+            )
+            OR linkedin_connection_id IN (
+              SELECT id FROM linkedin_connections
+              WHERE employee_id = ?
+            )
+          `)
+          .bind(employeeId, employeeId),
+        env.linkedinadam_db
+          .prepare("DELETE FROM employees WHERE id = ?")
+          .bind(employeeId),
+      ]);
+
+      if (imageKeys.length) {
+        try {
+          await env.LINKEDIN_IMAGES.delete(imageKeys);
+        } catch (error) {
+          console.error(
+            "Deleted employee image cleanup failed.",
+            error instanceof Error ? error.name : "unknown",
+          );
+        }
+      }
+    } catch (error) {
+      console.error(
+        "Permanent employee deletion failed.",
+        error instanceof Error ? error.name : "unknown",
+      );
+      return {
+        error:
+          "The employee could not be fully deleted. No further deletion steps will run.",
+      };
+    }
+
+    return redirect("/?employee=deleted#employees");
+  }
 
   if (intent === "disconnect_linkedin") {
     await env.linkedinadam_db
@@ -230,7 +423,12 @@ export default function EditEmployee({
   loaderData,
   actionData,
 }: Route.ComponentProps) {
-  const { employee, playbooks, linkedinConnection } = loaderData;
+  const {
+    employee,
+    playbooks,
+    linkedinConnection,
+    recordCounts,
+  } = loaderData;
 
   return (
     <main className="edit-page">
@@ -435,6 +633,84 @@ export default function EditEmployee({
               </article>
             ))}
           </div>
+        </section>
+
+        <section className="panel employee-removal-panel">
+          <p className="eyebrow">EMPLOYEE LIFECYCLE</p>
+          <h2>Archive or permanently delete</h2>
+          <p>
+            Archiving stops planning and automation while preserving
+            the employee’s history. Permanent deletion cannot be
+            undone.
+          </p>
+
+          <Form method="post" className="employee-archive-form">
+            <input
+              type="hidden"
+              name="intent"
+              value={
+                employee.status === "active"
+                  ? "archive_employee"
+                  : "restore_employee"
+              }
+            />
+            <input
+              name="actor_name"
+              required
+              placeholder="Your name"
+            />
+            <button type="submit">
+              {employee.status === "active"
+                ? "Archive employee"
+                : "Restore employee"}
+            </button>
+          </Form>
+
+          <details className="permanent-delete">
+            <summary>Permanently delete {employee.name}</summary>
+            <div>
+              <p>This will permanently remove:</p>
+              <ul>
+                <li>{recordCounts.content_drafts} content drafts</li>
+                <li>{recordCounts.content_plans} content plans</li>
+                <li>
+                  {recordCounts.connection_recommendations} connection
+                  recommendations
+                </li>
+                <li>{recordCounts.conversations} conversations</li>
+                <li>{recordCounts.activity_events} activity events</li>
+              </ul>
+              <Form method="post" className="permanent-delete-form">
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="delete_employee"
+                />
+                <label>
+                  Deleted by
+                  <input name="actor_name" required />
+                </label>
+                <label>
+                  Type “{employee.name}” to confirm
+                  <input name="confirmation" required />
+                </label>
+                <button
+                  type="submit"
+                  onClick={(event) => {
+                    if (
+                      !window.confirm(
+                        `Permanently delete ${employee.name} and all related data?`,
+                      )
+                    ) {
+                      event.preventDefault();
+                    }
+                  }}
+                >
+                  Permanently delete employee
+                </button>
+              </Form>
+            </div>
+          </details>
         </section>
       </div>
     </main>
