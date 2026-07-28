@@ -10,6 +10,7 @@ export default [
   route("analytics", "routes/analytics.tsx"),
   route("planner", "routes/planner.tsx"),
   route("playbooks", "routes/playbooks.tsx"),
+  route("connections", "routes/connections.tsx"),
   route(
     "auth/linkedin/start",
     "routes/auth.linkedin.start.ts",

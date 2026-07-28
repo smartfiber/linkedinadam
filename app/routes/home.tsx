@@ -1819,6 +1819,7 @@ export default function Home({
           </a>
           <a href="#employees">Employees</a>
           <a href="/playbooks">Playbooks</a>
+          <a href="/connections">Connections</a>
           <a href="#content">Content</a>
           <a href="/calendar">Calendar</a>
           <a href="/planner">Planner</a>
@@ -1841,6 +1842,9 @@ export default function Home({
           </div>
 
           <div className="header-actions">
+            <a className="secondary-link" href="/connections">
+              Review connections
+            </a>
             <a className="secondary-link" href="/playbooks">
               Manage playbooks
             </a>

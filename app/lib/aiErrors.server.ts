@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 
-type AIOperation = "post" | "image" | "plan";
+type AIOperation = "post" | "image" | "plan" | "recommendation";
 
 function safeDiagnosticValue(value: unknown) {
   if (typeof value !== "string") {
@@ -43,6 +43,8 @@ export function getSafeOpenAIErrorMessage(
       ? "image"
       : operation === "plan"
         ? "weekly content plan"
+        : operation === "recommendation"
+          ? "connection recommendation"
         : "post draft";
 
   if (error instanceof OpenAI.AuthenticationError) {
