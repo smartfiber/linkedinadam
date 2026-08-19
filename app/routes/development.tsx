@@ -5,13 +5,16 @@ import { type AccessEnvironment, requireAuthenticatedUser } from "../lib/auth.se
 import {
   getDevelopmentRequest,
   getDevelopmentSummary,
+  getGitHubSyncStatus,
   listActivity,
   listDevelopmentRequests,
   listNeedsAttention,
 } from "../lib/development/repository.server";
 import {
   createDevelopmentRequest,
+  recordQaAction,
   recordDevelopmentApproval,
+  saveQaHandoff,
 } from "../lib/development/service.server";
 import {
   DEVELOPMENT_PRIORITIES,
@@ -35,6 +38,9 @@ function filtersFromUrl(url: URL): DevelopmentFilters {
     priority: DEVELOPMENT_PRIORITIES.includes(priority as never) ? priority as DevelopmentFilters["priority"] : "",
     owner: url.searchParams.get("owner") || "",
     status: DEVELOPMENT_STATUSES.includes(status as never) ? status as DevelopmentFilters["status"] : "",
+    attention: url.searchParams.get("attention") === "ci_failing" || url.searchParams.get("attention") === "unknown_sync" ? url.searchParams.get("attention") as DevelopmentFilters["attention"] : "",
+    view: (url.searchParams.get("view") || "") as DevelopmentFilters["view"],
+    sort: (url.searchParams.get("sort") || "priority") as DevelopmentFilters["sort"],
   };
 }
 
@@ -44,12 +50,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const requestId = url.searchParams.get("request");
   const filters = filtersFromUrl(url);
-  const [summary, requests, attention, activity, detail] = await Promise.all([
+  const [summary, requests, attention, activity, detail, github] = await Promise.all([
     getDevelopmentSummary(env.linkedinadam_db),
     listDevelopmentRequests(env.linkedinadam_db, filters),
     listNeedsAttention(env.linkedinadam_db, user.email),
     listActivity(env.linkedinadam_db),
     requestId ? getDevelopmentRequest(env.linkedinadam_db, requestId) : null,
+    getGitHubSyncStatus(env.linkedinadam_db),
   ]);
 
   return {
@@ -60,6 +67,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     detail,
     filters,
     user,
+    github,
   };
 }
 
@@ -80,8 +88,23 @@ export async function action({ request, context }: Route.ActionArgs) {
       ownerEmail: String(formData.get("owner_email") || ""),
       qaPartnerEmail: String(formData.get("qa_partner_email") || ""),
       notes: String(formData.get("notes") || ""),
+      requestedBy: String(formData.get("requested_by") || ""), issueUrl: String(formData.get("issue_url") || ""), prUrl: String(formData.get("pr_url") || ""), branch: String(formData.get("branch") || ""),
     });
     return { ok: true, requestId: id };
+  }
+
+  if (intent === "qa_action") {
+    try {
+      await recordQaAction(env.linkedinadam_db, user, { requestId: String(formData.get("request_id") || ""), stage: String(formData.get("stage") || ""), outcome: String(formData.get("outcome") || "") as "ready" | "passed" | "failed" | "approved", notes: String(formData.get("qa_notes") || "") });
+      return { ok: true, message: "QA action recorded." };
+    } catch (error) { return { error: error instanceof Error ? error.message : "Unable to record QA action." }; }
+  }
+
+  if (intent === "save_handoff") {
+    try {
+      await saveQaHandoff(env.linkedinadam_db, user, { requestId: String(formData.get("request_id") || ""), stage: String(formData.get("stage") || ""), testUser: String(formData.get("test_user") || ""), tenant: String(formData.get("tenant") || ""), loginUrl: String(formData.get("login_url") || ""), testUrl: String(formData.get("test_url") || ""), navigation: String(formData.get("navigation") || ""), prerequisites: String(formData.get("prerequisites") || ""), testSteps: String(formData.get("test_steps") || ""), expectedResult: String(formData.get("expected_result") || ""), automatedCoverage: String(formData.get("automated_coverage") || ""), notes: String(formData.get("handoff_notes") || ""), status: String(formData.get("handoff_status") || "pending") });
+      return { ok: true, message: "QA handoff saved." };
+    } catch (error) { return { error: error instanceof Error ? error.message : "Unable to save QA handoff." }; }
   }
 
   if (intent === "record_approval") {
@@ -100,6 +123,9 @@ export async function action({ request, context }: Route.ActionArgs) {
 function SummaryCard({ label, value, tone = "" }: { label: string; value: number; tone?: string }) {
   return <article className={`development-summary-card ${tone}`}><span>{label}</span><strong>{value}</strong></article>;
 }
+function SummaryLink({ label, value, to, tone = "" }: { label: string; value: number; to: string; tone?: string }) {
+  return <Link to={to} className="summary-link"><SummaryCard label={label} value={value} tone={tone} /></Link>;
+}
 
 function StatusBadge({ value }: { value: string }) {
   return <span className={`development-status ${statusTone(value)}`}>{statusLabel(value)}</span>;
@@ -108,7 +134,7 @@ function StatusBadge({ value }: { value: string }) {
 export default function Development({ loaderData, actionData }: Route.ComponentProps) {
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
-  const { summary, requests, attention, activity, detail, filters, user } = loaderData;
+  const { summary, requests, attention, activity, detail, filters, user, github } = loaderData;
 
   return (
     <main className="development-page">
@@ -124,20 +150,32 @@ export default function Development({ loaderData, actionData }: Route.ComponentP
       <section className="development-summary-grid" aria-label="Development summary">
         <SummaryCard label="P0 Open" value={summary.p0Open} tone="critical" />
         <SummaryCard label="P1 Open" value={summary.p1Open} tone="critical" />
-        <SummaryCard label="Awaiting Adam" value={summary.awaitingAdam} />
-        <SummaryCard label="Awaiting Joe" value={summary.awaitingJoe} />
+        <SummaryLink label="Awaiting Adam" value={summary.awaitingAdam} to="/development?status=awaiting_adam" />
+        <SummaryLink label="Awaiting Joe" value={summary.awaitingJoe} to="/development?status=awaiting_joe" />
         <SummaryCard label="Awaiting Mutual Approval" value={summary.awaitingMutualApproval} />
-        <SummaryCard label="Ready for Dev" value={summary.readyForDev} />
-        <SummaryCard label="On Dev" value={summary.onDev} />
-        <SummaryCard label="Ready for Main" value={summary.readyForMain} />
-        <SummaryCard label="On Main / Needs Verification" value={summary.onMainNeedsVerification} />
-        <SummaryCard label="Blocked" value={summary.blocked} tone="critical" />
+        <SummaryLink label="Ready for Dev" value={summary.readyForDev} to="/development?status=ready_for_dev" />
+        <SummaryLink label="On Dev" value={summary.onDev} to="/development?status=on_dev" />
+        <SummaryLink label="Ready for Main" value={summary.readyForMain} to="/development?status=ready_for_main" />
+        <SummaryLink label="On Main / Needs Verification" value={summary.onMainNeedsVerification} to="/development?status=on_main_needs_verification" />
+        <SummaryLink label="CI Failing" value={summary.ciFailing} to="/development?attention=ci_failing" tone="critical" />
+        <SummaryLink label="Blocked" value={summary.blocked} to="/development?status=blocked" tone="critical" />
+        <SummaryLink label="Unknown Sync" value={summary.unknownSync} to="/development?attention=unknown_sync" />
         <SummaryCard label="Verified" value={summary.verified} tone="complete" />
       </section>
+
+      <nav className="saved-views panel" aria-label="Development saved views">
+        {[['needs_adam','Needs Adam'],['needs_joe','Needs Joe'],['urgent','P0 / P1'],['awaiting_approval','Awaiting Approval'],['ready_dev','Ready for Dev'],['on_dev','On Dev'],['ready_main','Ready for Main'],['main_verify','Main Needs Verification'],['blocked','Blocked'],['sync_unknown','GitHub Sync Unknown']].map(([view,label]) => <Link key={view} className={filters.view === view ? "active" : ""} to={`/development?view=${view}`}>{label}</Link>)}
+      </nav>
 
       <section className="development-attention panel">
         <div className="panel-heading"><div><p className="eyebrow">PERSONAL QUEUE</p><h2>Needs Your Attention</h2></div><span>{attention.length}</span></div>
         {attention.length ? <ul className="attention-list">{attention.map((item) => <li key={item.id}><Link to={`/development?request=${item.id}`}>{item.priority} · {item.title}</Link><span>{item.next_action || statusLabel(item.overall_status)}</span></li>)}</ul> : <p className="empty-state">Nothing currently requires action for {user.displayName}.</p>}
+      </section>
+
+      <section className="development-attention panel">
+        <div className="panel-heading"><div><p className="eyebrow">READ-ONLY INTEGRATION</p><h2>{github.lastRun ? "GitHub sync" : "GitHub sync not connected"}</h2></div><span>{github.lastRun?.status || "GitHub connection required"}</span></div>
+        <p>{github.lastRun?.error_message || (github.lastRun?.finished_at ? `Last sync ${github.lastRun.finished_at}.` : "Current Development records and the manual QA workflow remain fully usable. Issue, PR, CI, and branch fields are unavailable until the read-only GitHub App is connected.")}</p>
+        <div className="branch-list">{github.branches.length ? github.branches.map(branch => <span key={branch.role}><strong>{branch.role}</strong> {branch.branch_name || branch.status}{branch.sha ? ` · ${branch.sha.slice(0, 8)}` : ""}</span>) : <span>Branch mapping will appear after the first sync.</span>}</div>
       </section>
 
       <section className="development-toolbar panel">
@@ -146,6 +184,7 @@ export default function Development({ loaderData, actionData }: Route.ComponentP
           <select name="priority" defaultValue={filters.priority}><option value="">All priorities</option>{DEVELOPMENT_PRIORITIES.map((value) => <option key={value}>{value}</option>)}</select>
           <select name="status" defaultValue={filters.status}><option value="">All statuses</option>{DEVELOPMENT_STATUSES.map((value) => <option key={value} value={value}>{statusLabel(value)}</option>)}</select>
           <input name="owner" placeholder="Owner email" defaultValue={filters.owner} />
+          <select name="sort" defaultValue={filters.sort}><option value="priority">Priority</option><option value="updated">Recently updated</option><option value="next_action">Next action</option></select>
           <button type="submit">Filter</button>
           <Link className="secondary-link" to="/development">Clear</Link>
         </Form>
@@ -153,15 +192,15 @@ export default function Development({ loaderData, actionData }: Route.ComponentP
 
       <section className="development-table-panel panel">
         <div className="panel-heading"><div><p className="eyebrow">SYSTEM OF RECORD</p><h2>Development requests</h2></div><span>{requests.length} shown</span></div>
-        <div className="table-scroll"><table className="development-table"><thead><tr>{["Request", "Priority", "Type", "Requested By", "Owner", "QA Partner", "Area", "Issue / PR", "Adam", "Joe", "Approval", "Dev", "Main", "Verification", "Next Action", "Updated"].map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{requests.length ? requests.map((item) => <tr key={item.id}><td><Link to={`/development?request=${item.id}`}><strong>{item.external_key || item.id.slice(0, 8)}</strong><span>{item.title}</span></Link><StatusBadge value={item.overall_status} /></td><td><span className={`priority-badge ${item.priority.toLowerCase()}`}>{item.priority}</span></td><td>{item.type}</td><td>{item.requested_by_name}</td><td>{item.owner_email || "—"}</td><td>{item.qa_partner_email || "—"}</td><td>{item.product_area || "—"}</td><td>{item.issue_url || item.pr_url ? <span className="link-stack">{item.issue_url ? <a href={item.issue_url}>Issue</a> : null}{item.pr_url ? <a href={item.pr_url}>PR</a> : null}</span> : "—"}</td><td><StatusBadge value={item.adam_state} /></td><td><StatusBadge value={item.joe_state} /></td><td><StatusBadge value={item.approval_state} /></td><td><StatusBadge value={item.dev_state} /></td><td><StatusBadge value={item.main_state} /></td><td><StatusBadge value={item.overall_status === "verified" ? "verified" : item.main_state === "present" ? "awaiting_verification" : "unknown"} /></td><td>{item.next_action}</td><td>{item.updated_at}</td></tr>) : <tr><td colSpan={16} className="empty-table">No development requests yet. Create the first record below.</td></tr>}</tbody></table></div>
+        <div className="table-scroll"><table className="development-table"><thead><tr>{["Request", "Owner", "QA Partner", "Issue", "PR", "CI", "Branch", "Adam", "Joe", "Dev", "Main", "Next Action", "Updated"].map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{requests.length ? requests.map((item) => <tr key={item.id}><td><Link to={`/development?request=${item.id}`}><strong>{item.external_key || item.id.slice(0, 8)}</strong><span>{item.title}</span></Link><StatusBadge value={item.overall_status} /></td><td>{item.owner_email || "Unassigned"}</td><td>{item.qa_partner_email || "Unassigned"}</td><td>{item.issue_url ? <a href={item.issue_url}>{item.issue_number ? `#${item.issue_number}` : "Issue"}</a> : "Unavailable"}</td><td>{item.pr_url ? <a href={item.pr_url}>{item.pr_number ? `#${item.pr_number} · ${item.pr_state}` : "PR"}</a> : "Unavailable"}</td><td><StatusBadge value={item.ci_state || "CI Unknown"} /></td><td>{item.source_branch ? <span className="link-stack"><code>{item.source_branch}</code><span>→ {item.target_branch}</span></span> : "Unavailable"}</td><td><StatusBadge value={item.adam_state} /></td><td><StatusBadge value={item.joe_state} /></td><td><StatusBadge value={item.dev_state} /></td><td><StatusBadge value={item.main_state} /></td><td className="next-action-cell"><strong>{item.next_action}</strong></td><td>{item.updated_at}</td></tr>) : <tr><td colSpan={13} className="empty-table">No development requests yet. Create the first record below.</td></tr>}</tbody></table></div>
       </section>
 
       <div className="development-lower-grid">
-        <section className="panel"><div className="panel-heading"><div><p className="eyebrow">CONTROLLED WRITE</p><h2>New request</h2></div></div><Form method="post" className="development-form"><input type="hidden" name="intent" value="create_request" /><label>Title<input required name="title" placeholder="Short request title" /></label><label>Problem<textarea name="problem" rows={3} /></label><label>Why / Decision<textarea name="why_decision" rows={3} /></label><div className="form-grid"><label>Priority<select name="priority" defaultValue="P2">{DEVELOPMENT_PRIORITIES.map((value) => <option key={value}>{value}</option>)}</select></label><label>Type<select name="type" defaultValue="Other">{DEVELOPMENT_TYPES.map((value) => <option key={value}>{value}</option>)}</select></label></div><div className="form-grid"><label>Owner email<input type="email" name="owner_email" /></label><label>QA partner email<input type="email" name="qa_partner_email" /></label></div><label>Product area<input name="product_area" /></label><label>Notes<textarea name="notes" rows={2} /></label><button disabled={busy}>{busy ? "Saving…" : "Create request"}</button></Form></section>
+        <section className="panel"><div className="panel-heading"><div><p className="eyebrow">CONTROLLED WRITE</p><h2>New request</h2></div></div><Form method="post" className="development-form"><input type="hidden" name="intent" value="create_request" /><label>Title<input required name="title" placeholder="Short request title" /></label><div className="form-grid"><label>Priority<select name="priority" defaultValue="P2">{DEVELOPMENT_PRIORITIES.map((value) => <option key={value}>{value}</option>)}</select></label><label>Type<select name="type" defaultValue="Other">{DEVELOPMENT_TYPES.map((value) => <option key={value}>{value}</option>)}</select></label></div><label>Requested by<input name="requested_by" defaultValue={user.displayName} /></label><div className="form-grid"><label>Owner email<input type="email" name="owner_email" /></label><label>QA partner email<input type="email" name="qa_partner_email" /></label></div><label>Product area<input name="product_area" /></label><label>Problem<textarea name="problem" rows={3} /></label><label>Why / Decision<textarea name="why_decision" rows={3} /></label><div className="form-grid"><label>Issue URL<input type="url" name="issue_url" /></label><label>PR URL<input type="url" name="pr_url" /></label></div><label>Working branch<input name="branch" placeholder="Optional; never inferred" /></label><label>Notes<textarea name="notes" rows={2} /></label><button disabled={busy}>{busy ? "Saving…" : "Create request"}</button></Form></section>
         <section className="panel"><div className="panel-heading"><div><p className="eyebrow">APPEND-ONLY HISTORY</p><h2>Recent activity</h2></div></div>{activity.length ? <ul className="activity-list">{activity.map((event) => <li key={event.id}><strong>{event.summary}</strong><span>{event.actor_identity} · {event.occurred_at}</span></li>)}</ul> : <p className="empty-state">Development events will appear here.</p>}</section>
       </div>
 
-      {detail ? <section className="development-detail panel"><div className="panel-heading"><div><p className="eyebrow">REQUEST DETAIL</p><h2>{detail.request.title}</h2><StatusBadge value={detail.request.overall_status} /></div><Link className="secondary-link" to="/development">Close</Link></div><div className="detail-copy"><section><h3>Problem</h3><p>{detail.request.problem || "Not recorded."}</p><h3>Why / Decision</h3><p>{detail.request.why_decision || "Not recorded."}</p><h3>Notes</h3><p>{detail.request.notes || "Not recorded."}</p></section><section><h3>GitHub links</h3>{detail.links.length ? <ul>{detail.links.map((link: any) => <li key={link.id}><a href={link.url || "#"}>{link.provider} {link.type} {link.external_id}</a></li>)}</ul> : <p>Not connected yet. Read-only GitHub App sync is a future step.</p>}<h3>Branch status</h3><ul className="branch-list">{detail.branches.length ? detail.branches.map((branch: any) => <li key={branch.id}><strong>{branch.branch}</strong><StatusBadge value={branch.state} />{branch.commit_sha ? <code>{branch.commit_sha}</code> : null}</li>) : <li>No branch state recorded yet.</li>}</ul></section></div><section><h3>QA handoffs</h3>{detail.qa.length ? <div className="qa-grid">{detail.qa.map((handoff) => <QaHandoffCard key={handoff.id} handoff={handoff} />)}</div> : <p>No QA handoff recorded yet. URLs will only appear when saved here.</p>}</section><section><h3>Approval history</h3>{detail.approvals.length ? <ul className="activity-list">{detail.approvals.map((approval) => <li key={approval.id}><strong>{approval.stage} · {approval.decision}</strong><span>{approval.actor_name} · {approval.created_at}{approval.notes ? ` · ${approval.notes}` : ""}</span></li>)}</ul> : <p>No approvals recorded.</p>}</section><section><h3>Activity</h3>{detail.activity.length ? <ul className="activity-list">{detail.activity.map((event) => <li key={event.id}><strong>{event.summary}</strong><span>{event.actor_identity} · {event.occurred_at}</span></li>)}</ul> : <p>No activity recorded.</p>}</section></section> : null}
+      {detail ? <section className="development-detail panel"><div className="panel-heading"><div><p className="eyebrow">REQUEST DETAIL</p><h2>{detail.request.title}</h2><StatusBadge value={detail.request.overall_status} /></div><Link className="secondary-link" to="/development">Close</Link></div>{actionData?.error ? <p className="form-message error" role="alert">{actionData.error}</p> : actionData?.message ? <p className="form-message success" role="status">{actionData.message}</p> : null}<section className="detail-overview"><h3>Overview</h3><dl>{[["Priority",detail.request.priority],["Type",detail.request.type],["Requested by",detail.request.requested_by_name],["Owner",detail.request.owner_email || "Unassigned"],["QA partner",detail.request.qa_partner_email || "Unassigned"],["Product area",detail.request.product_area || "Unspecified"],["Status",statusLabel(detail.request.overall_status)]].map(([label,value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></section><div className="detail-copy"><section><h3>Problem</h3><p>{detail.request.problem || "Not recorded."}</p><h3>Why / Decision</h3><p>{detail.request.why_decision || "Not recorded."}</p></section><section><h3>GitHub</h3>{detail.links.length ? <ul>{detail.links.map((link: any) => <li key={link.id}><a href={link.url || "#"}>{link.type.replaceAll('_',' ')}</a> <small>{link.provider === 'manual' ? 'Manual link' : 'GitHub sync'}</small></li>)}</ul> : <p>Pending GitHub connection.</p>}<h3>Branch state</h3><ul className="branch-list">{detail.branches.length ? detail.branches.map((branch: any) => <li key={branch.id}><strong>{branch.branch}</strong><StatusBadge value={branch.state} />{branch.commit_sha ? <code>{branch.commit_sha.slice(0,8)}</code> : null}</li>) : <li>Unavailable until GitHub is connected.</li>}</ul></section></div><section><h3>QA workflow</h3><div className="qa-actions">{[["ADAM_QA","Mark Adam QA Ready","ready"],["ADAM_QA","Adam Pass","passed"],["ADAM_QA","Adam Fail","failed"],["JOE_QA","Mark Joe QA Ready","ready"],["JOE_QA","Joe Pass","passed"],["JOE_QA","Joe Fail","failed"],["MUTUAL_APPROVAL","Mutual Approval","approved"],["DEV_QA","Dev QA Pass","passed"],["DEV_QA","Dev QA Fail","failed"],["MAIN_VERIFICATION","Main Verification Pass","passed"],["MAIN_VERIFICATION","Main Verification Fail","failed"]].map(([stage,label,outcome]) => <Form method="post" key={label} className="qa-action"><input type="hidden" name="intent" value="qa_action"/><input type="hidden" name="request_id" value={detail.request.id}/><input type="hidden" name="stage" value={stage}/><input type="hidden" name="outcome" value={outcome}/><input name="qa_notes" aria-label={`${label} note`} placeholder={outcome === 'failed' ? 'Failure note required' : 'Optional note'}/><button className={outcome === 'failed' ? 'danger-button' : ''}>{label}</button></Form>)}</div></section><section><h3>Test handoff</h3><div className="qa-grid">{["ADAM_QA","JOE_QA","DEV_QA","MAIN_VERIFICATION"].map(stage => { const saved = detail.qa.find(handoff => handoff.stage === stage); const handoff = saved || { id: 0, stage, test_user:null,tenant:null,login_url:null,test_url:null,navigation:null,prerequisites:null,test_steps:null,expected_result:null,automated_coverage:null,notes:null,status:'pending',verified_by:null,verified_at:null }; return <QaHandoffCard key={stage} handoff={handoff as any} requestId={detail.request.id}/>; })}</div></section><section><h3>Approval history</h3>{detail.approvals.length ? <ul className="activity-list">{detail.approvals.map((approval) => <li key={approval.id}><strong>{approval.stage} · {approval.decision}</strong><span>{approval.actor_name} · {approval.created_at}{approval.notes ? ` · ${approval.notes}` : ""}</span></li>)}</ul> : <p>No approvals recorded.</p>}</section><section><h3>Activity</h3>{detail.activity.length ? <ul className="activity-list">{detail.activity.map((event) => <li key={event.id}><strong>{event.summary}</strong><span>{event.actor_identity} · {event.occurred_at}</span></li>)}</ul> : <p>No activity recorded.</p>}</section><section><h3>Notes</h3><p>{detail.request.notes || "No internal notes."}</p></section></section> : null}
     </main>
   );
 }

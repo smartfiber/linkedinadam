@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertCanWriteDevelopment, createDevelopmentRequest } from "../app/lib/development/service.server";
+import { assertCanWriteDevelopment, createDevelopmentRequest, recordQaAction, saveQaHandoff } from "../app/lib/development/service.server";
 import { statusLabel } from "../app/lib/development/status";
 import type { DevelopmentActor } from "../app/lib/development/types";
 
@@ -50,5 +50,27 @@ describe("development foundation", () => {
     });
     expect(id).toMatch(/^[0-9a-f-]{36}$/);
     expect(db.statements).toHaveLength(2);
+  });
+
+  it("keeps manual GitHub links optional and reconciliation-friendly", async () => {
+    const db = fakeDatabase();
+    await createDevelopmentRequest(db, adam, { title: "Manual work", priority: "P2", type: "Feature", requestedBy: "Support", issueUrl: "https://github.com/colossalbreacker/net-x/issues/12", prUrl: "https://github.com/colossalbreacker/net-x/pull/13", branch: "Adam" });
+    expect(db.statements).toHaveLength(4);
+  });
+
+  it("requires notes on QA failure and preserves actor-attributed history", async () => {
+    const db = fakeDatabase();
+    await expect(recordQaAction(db, adam, { requestId: "request-1", stage: "ADAM_QA", outcome: "failed" })).rejects.toThrow("failure note");
+    await recordQaAction(db, adam, { requestId: "request-1", stage: "ADAM_QA", outcome: "failed", notes: "Login fails" });
+    expect(db.statements).toHaveLength(3);
+    expect(JSON.stringify(db.statements)).toContain("adam@net-x.io");
+    expect(JSON.stringify(db.statements)).toContain("Login fails");
+  });
+
+  it("saves handoffs without advancing human QA automatically", async () => {
+    const db = fakeDatabase();
+    await saveQaHandoff(db, adam, { requestId: "request-1", stage: "MAIN_VERIFICATION", testUser: "qa@example.com", status: "pending" });
+    expect(db.statements).toHaveLength(2);
+    expect(JSON.stringify(db.statements)).not.toContain("UPDATE development_requests SET overall_status");
   });
 });

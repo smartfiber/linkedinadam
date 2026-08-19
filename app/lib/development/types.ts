@@ -75,6 +75,12 @@ export type DevelopmentRequest = {
   dev_state: string;
   main_state: string;
   verification_state: string;
+  issue_number: number | null;
+  pr_number: number | null;
+  pr_state: string | null;
+  ci_state: string | null;
+  source_branch: string | null;
+  target_branch: string | null;
 };
 
 export type DevelopmentSummary = {
@@ -89,6 +95,8 @@ export type DevelopmentSummary = {
   onMainNeedsVerification: number;
   blocked: number;
   verified: number;
+  ciFailing: number;
+  unknownSync: number;
 };
 
 export type DevelopmentFilters = {
@@ -96,6 +104,9 @@ export type DevelopmentFilters = {
   priority?: DevelopmentPriority | "";
   owner?: string;
   status?: DevelopmentStatus | "";
+  attention?: "ci_failing" | "unknown_sync" | "";
+  view?: "needs_adam" | "needs_joe" | "urgent" | "awaiting_approval" | "ready_dev" | "on_dev" | "ready_main" | "main_verify" | "blocked" | "sync_unknown" | "";
+  sort?: "updated" | "priority" | "next_action";
 };
 
 export type ActivityEvent = {
@@ -139,3 +150,8 @@ export type DevelopmentApproval = {
 };
 
 export type DevelopmentActor = Pick<AuthenticatedUser, "email" | "displayName" | "subject" | "role">;
+
+export type GitHubSyncStatus = {
+  lastRun: { status: string; finished_at: string | null; error_message: string | null } | null;
+  branches: { role: string; branch_name: string | null; status: string; sha: string | null }[];
+};

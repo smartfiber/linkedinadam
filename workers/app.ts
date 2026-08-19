@@ -1,5 +1,7 @@
 import { createRequestHandler } from "react-router";
 import { runAutopilotCycle } from "../app/lib/autopilot.server";
+import { syncNetXRepository } from "../app/lib/development/sync.server";
+import type { GitHubEnvironment } from "../app/lib/integrations/github.server";
 import {
   getAuthenticatedUser,
   isPublicAuthException,
@@ -97,5 +99,9 @@ export default {
   },
   async scheduled(_controller, env, ctx) {
     ctx.waitUntil(runAutopilotCycle(env));
+    const githubEnv = env as unknown as GitHubEnvironment & { linkedinadam_db: D1Database };
+    if (githubEnv.GITHUB_SYNC_ENABLED === "true") {
+      ctx.waitUntil(syncNetXRepository(githubEnv.linkedinadam_db, githubEnv));
+    }
   },
 } satisfies ExportedHandler<Env>;
