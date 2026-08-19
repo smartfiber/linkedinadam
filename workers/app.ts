@@ -1,5 +1,9 @@
 import { createRequestHandler } from "react-router";
 import { runAutopilotCycle } from "../app/lib/autopilot.server";
+import {
+  getAuthenticatedUser,
+  type AccessEnvironment,
+} from "../app/lib/auth.server";
 
 declare module "react-router" {
   export interface AppLoadContext {
@@ -19,6 +23,25 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const imagePrefix = "/images/generated/";
+
+    // Cloudflare Access is the external policy boundary. Keep the OAuth
+    // callback public so LinkedIn can complete its redirect; the callback
+    // validates its one-time state before linking an account.
+    if (url.pathname !== "/auth/linkedin/callback") {
+      const user = getAuthenticatedUser(
+        request,
+        env as unknown as AccessEnvironment,
+      );
+      if (!user) {
+        return new Response("Cloudflare Access authentication required.", {
+          status: 401,
+          headers: {
+            "content-type": "text/plain; charset=utf-8",
+            "www-authenticate": "Cloudflare Access",
+          },
+        });
+      }
+    }
 
     if (
       request.method === "GET" &&
