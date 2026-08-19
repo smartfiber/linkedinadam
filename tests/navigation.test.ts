@@ -30,6 +30,7 @@ describe("Content & LinkedIn navigation organization", () => {
   it("links the Content & LinkedIn landing to existing working routes", () => {
     for (const route of ["/playbooks", "/planner", "/calendar", "/orchestration", "/connections", "/analytics", "/operations"]) expect(workspace).toContain(`\"${route}\"`);
     expect(home).toContain('href="/content-linkedin"');
+    expect(workspace).not.toContain("/#engagement");
   });
 
   it("keeps the Development Console visibly disabled with no action route", () => {
