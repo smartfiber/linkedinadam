@@ -16,7 +16,12 @@
     ]
   },
   "vars": {
-    "VALUE_FROM_CLOUDFLARE": "Hello from Cloudflare"
+    "VALUE_FROM_CLOUDFLARE": "Hello from Cloudflare",
+    "CLOUDFLARE_ACCESS_TEAM_DOMAIN": "green-wind-7710.cloudflareaccess.com",
+    "CLOUDFLARE_ACCESS_AUD": "0a98552ada361a92068eed3a930f704a8a1ef8c6194b3c7573509745003d5e99",
+    "BACKOFFICE_OWNER_EMAIL": "adam@net-x.io",
+    "BACKOFFICE_ADMIN_EMAILS": "joseph@net-x.io",
+    "BACKOFFICE_ENVIRONMENT": "production"
   },
   "d1_databases": [
     {

@@ -6,6 +6,13 @@ LinkedIn publishing or content workflows.
 
 ## Cloudflare Access
 
+Production Back Office runtime variables are defined in `wrangler.json`, which
+is the source of truth used by automatic Workers Builds from `main`. Keep the
+Access team domain, Access audience, owner/admin mappings, and production
+environment there so a future `wrangler deploy` cannot drop dashboard-only
+text bindings. Secrets remain encrypted Worker secrets and must never be added
+to Wrangler source configuration.
+
 Production requests are expected to arrive through Cloudflare Access. The
 Worker independently verifies the `Cf-Access-Jwt-Assertion` signature against
 Cloudflare Access JWKS before accepting any identity. It checks the configured
