@@ -2,6 +2,7 @@ import { createRequestHandler } from "react-router";
 import { runAutopilotCycle } from "../app/lib/autopilot.server";
 import {
   getAuthenticatedUser,
+  isPublicAuthException,
   type AccessEnvironment,
 } from "../app/lib/auth.server";
 
@@ -24,11 +25,11 @@ export default {
     const url = new URL(request.url);
     const imagePrefix = "/images/generated/";
 
-    // Cloudflare Access is the external policy boundary. Keep the OAuth
-    // callback public so LinkedIn can complete its redirect; the callback
-    // validates its one-time state before linking an account.
-    if (url.pathname !== "/auth/linkedin/callback") {
-      const user = getAuthenticatedUser(
+    // Keep the OAuth callback public so LinkedIn can complete its redirect;
+    // the callback validates its one-time state before linking an account.
+    // Every other request requires a cryptographically verified Access JWT.
+    if (!isPublicAuthException(url.pathname)) {
+      const user = await getAuthenticatedUser(
         request,
         env as unknown as AccessEnvironment,
       );

@@ -1,3 +1,13 @@
+import {
+  createRemoteJWKSet,
+  jwtVerify,
+  type JWK,
+  type JWTVerifyGetKey,
+  type JWTVerifyOptions,
+  type KeyLike,
+  type JWTPayload,
+} from "jose";
+
 export type BackOfficeRole =
   | "OWNER"
   | "ADMIN"
@@ -25,7 +35,17 @@ export type AccessEnvironment = {
   BACKOFFICE_MARKETING_EMAILS?: string;
   BACKOFFICE_SALES_EMAILS?: string;
   BACKOFFICE_VIEWER_EMAILS?: string;
+  CLOUDFLARE_ACCESS_TEAM_DOMAIN?: string;
+  CLOUDFLARE_ACCESS_AUD?: string;
 };
+
+export type CloudflareAccessClaims = JWTPayload & {
+  sub: string;
+  email: string;
+  name?: string;
+};
+
+export type AccessJwtKeySet = KeyLike | Uint8Array | JWK | JWTVerifyGetKey;
 
 const ROLE_ORDER: BackOfficeRole[] = [
   "OWNER",
@@ -35,6 +55,11 @@ const ROLE_ORDER: BackOfficeRole[] = [
   "SALES",
   "VIEWER",
 ];
+
+const remoteJwksByIssuer = new Map<
+  string,
+  ReturnType<typeof createRemoteJWKSet>
+>();
 
 function normalizedEmail(value: string | null | undefined) {
   return value?.trim().toLowerCase() || null;
@@ -47,6 +72,16 @@ function configuredEmails(value: string | undefined) {
       .map((email) => normalizedEmail(email))
       .filter((email): email is string => Boolean(email)),
   );
+}
+
+function normalizedTeamDomain(value: string | undefined) {
+  if (!value) return null;
+  try {
+    const withScheme = value.includes("://") ? value : `https://${value}`;
+    return new URL(withScheme).hostname.toLowerCase().replace(/\.$/, "");
+  } catch {
+    return null;
+  }
 }
 
 export function roleForEmail(
@@ -85,36 +120,93 @@ function accessHeader(request: Request, ...names: string[]) {
   return null;
 }
 
-export function getAuthenticatedUser(
+function accessJwtConfiguration(environment: AccessEnvironment) {
+  const teamDomain = normalizedTeamDomain(
+    environment.CLOUDFLARE_ACCESS_TEAM_DOMAIN,
+  );
+  const audience = environment.CLOUDFLARE_ACCESS_AUD?.trim();
+  if (!teamDomain || !audience) return null;
+
+  return {
+    issuer: `https://${teamDomain}`,
+    jwksUrl: `https://${teamDomain}/cdn-cgi/access/certs`,
+    audience,
+  };
+}
+
+function remoteJwksFor(configuration: ReturnType<typeof accessJwtConfiguration>) {
+  if (!configuration) return null;
+  const existing = remoteJwksByIssuer.get(configuration.issuer);
+  if (existing) return existing;
+
+  const remoteJwks = createRemoteJWKSet(new URL(configuration.jwksUrl));
+  remoteJwksByIssuer.set(configuration.issuer, remoteJwks);
+  return remoteJwks;
+}
+
+export async function verifyAccessJwtToken(
+  token: string,
+  environment: AccessEnvironment,
+  keySet: AccessJwtKeySet | null = remoteJwksFor(accessJwtConfiguration(environment)),
+): Promise<CloudflareAccessClaims | null> {
+  const configuration = accessJwtConfiguration(environment);
+  if (!configuration || !keySet || !token.trim()) return null;
+
+  try {
+    const options: JWTVerifyOptions = {
+      algorithms: ["RS256"],
+      issuer: configuration.issuer,
+      audience: configuration.audience,
+      clockTolerance: 5,
+    };
+    const result =
+      typeof keySet === "function"
+        ? await jwtVerify(token, keySet as JWTVerifyGetKey, options)
+        : await jwtVerify(token, keySet as KeyLike | Uint8Array | JWK, options);
+
+    const { payload } = result;
+    if (
+      typeof payload.sub !== "string" ||
+      !payload.sub ||
+      typeof payload.email !== "string" ||
+      !normalizedEmail(payload.email) ||
+      typeof payload.exp !== "number"
+    ) {
+      return null;
+    }
+
+    return {
+      ...payload,
+      sub: payload.sub,
+      email: payload.email,
+      ...(typeof payload.name === "string" ? { name: payload.name } : {}),
+    };
+  } catch {
+    // Authentication must fail closed for malformed, untrusted, expired, or
+    // unverifiable tokens, including JWKS retrieval failures.
+    return null;
+  }
+}
+
+export async function getAuthenticatedUser(
   request: Request,
   environment: AccessEnvironment,
-): AuthenticatedUser | null {
-  const email = normalizedEmail(
-    accessHeader(
-      request,
-      "Cf-Access-Authenticated-User-Email",
-      "Cf-Access-User-Email",
-    ),
-  );
+  keySet?: AccessJwtKeySet,
+): Promise<AuthenticatedUser | null> {
+  const token = accessHeader(request, "Cf-Access-Jwt-Assertion");
 
-  if (email) {
-    const role = roleForEmail(email, environment);
-    if (!role) return null;
+  if (token) {
+    const claims = await verifyAccessJwtToken(token, environment, keySet);
+    if (!claims) return null;
+
+    const email = normalizedEmail(claims.email);
+    const role = email ? roleForEmail(email, environment) : null;
+    if (!email || !role) return null;
 
     return {
       email,
-      displayName:
-        accessHeader(
-          request,
-          "Cf-Access-Authenticated-User-Name",
-          "Cf-Access-User-Name",
-        ) || email,
-      subject:
-        accessHeader(
-          request,
-          "Cf-Access-Authenticated-User-Id",
-          "Cf-Access-User-Id",
-        ) || email,
+      displayName: claims.name?.trim() || email,
+      subject: claims.sub,
       role,
       source: "cloudflare-access",
     };
@@ -146,11 +238,15 @@ export function getAuthenticatedUser(
   return null;
 }
 
-export function requireAuthenticatedUser(
+export function isPublicAuthException(pathname: string) {
+  return pathname === "/auth/linkedin/callback";
+}
+
+export async function requireAuthenticatedUser(
   request: Request,
   environment: AccessEnvironment,
-): AuthenticatedUser {
-  const user = getAuthenticatedUser(request, environment);
+): Promise<AuthenticatedUser> {
+  const user = await getAuthenticatedUser(request, environment);
   if (!user) {
     throw new Response("Authentication required.", {
       status: 401,

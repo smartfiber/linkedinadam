@@ -40,7 +40,7 @@ function filtersFromUrl(url: URL): DevelopmentFilters {
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const env = environment(context);
-  const user = requireAuthenticatedUser(request, env);
+  const user = await requireAuthenticatedUser(request, env);
   const url = new URL(request.url);
   const requestId = url.searchParams.get("request");
   const filters = filtersFromUrl(url);
@@ -65,7 +65,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
 export async function action({ request, context }: Route.ActionArgs) {
   const env = environment(context);
-  const user = requireAuthenticatedUser(request, env);
+  const user = await requireAuthenticatedUser(request, env);
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
 
