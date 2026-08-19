@@ -1865,8 +1865,11 @@ export default function Home({
 
         <nav>
           <a className="active" href="/">
-            Dashboard
+            Command Center
           </a>
+          <a href="/development">Development</a>
+          <a href="#people" className="future-nav">People <small>Coming Soon</small></a>
+          <a href="#outreach" className="future-nav">Outreach <small>Coming Soon</small></a>
           <a href="#employees">Employees</a>
           <a href="/playbooks">Playbooks</a>
           <a href="/connections">Connections</a>
@@ -1879,6 +1882,8 @@ export default function Home({
           <a href="#activity">Activity</a>
           <a href="#add-employee">Add Employee</a>
           <a href="#agents">Agents</a>
+          <a href="#newsletters" className="future-nav">Newsletters <small>Coming Soon</small></a>
+          <a href="#settings" className="future-nav">Settings <small>Coming Soon</small></a>
         </nav>
       </aside>
 
