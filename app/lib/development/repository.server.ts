@@ -5,6 +5,7 @@ import type {
   DevelopmentRequest,
   DevelopmentSummary,
   QaHandoff,
+  GitHubSyncStatus,
 } from "./types";
 
 type DevelopmentDatabase = D1Database;
@@ -30,6 +31,12 @@ function queryParts(filters: DevelopmentFilters) {
     where.push("r.overall_status = ?");
     bindings.push(filters.status);
   }
+  if (filters.attention === "ci_failing") {
+    where.push("EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure', 'cancelled', 'timed_out', 'action_required'))");
+  }
+  if (filters.attention === "unknown_sync") {
+    where.push("EXISTS (SELECT 1 FROM development_branch_states s WHERE s.development_request_id = r.id AND s.state = 'unknown')");
+  }
 
   return {
     clause: where.length ? `WHERE ${where.join(" AND ")}` : "",
@@ -48,6 +55,17 @@ export async function listDevelopmentRequests(
         r.*,
         issue.url AS issue_url,
         pr.url AS pr_url,
+        (SELECT number FROM github_sync_items g WHERE g.development_request_id = r.id AND g.kind = 'issue' ORDER BY number LIMIT 1) AS issue_number,
+        (SELECT number FROM github_sync_items g WHERE g.development_request_id = r.id AND g.kind = 'pull_request' ORDER BY number DESC LIMIT 1) AS pr_number,
+        (SELECT state FROM github_sync_items g WHERE g.development_request_id = r.id AND g.kind = 'pull_request' ORDER BY number DESC LIMIT 1) AS pr_state,
+        (SELECT json_extract(payload_json, '$.sourceBranch') FROM github_sync_items g WHERE g.development_request_id = r.id AND g.kind = 'pull_request' ORDER BY number DESC LIMIT 1) AS source_branch,
+        (SELECT json_extract(payload_json, '$.targetBranch') FROM github_sync_items g WHERE g.development_request_id = r.id AND g.kind = 'pull_request' ORDER BY number DESC LIMIT 1) AS target_branch,
+        CASE
+          WHEN EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure','cancelled','timed_out','action_required')) THEN 'CI Failing'
+          WHEN EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request' AND json_extract(c.value, '$.status') <> 'completed') THEN 'CI Pending'
+          WHEN EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request') THEN 'CI Passed'
+          ELSE 'CI Unknown'
+        END AS ci_state,
         COALESCE(adam.state, 'unknown') AS adam_state,
         COALESCE(joe.state, 'unknown') AS joe_state,
         COALESCE((
@@ -73,10 +91,12 @@ export async function listDevelopmentRequests(
         ON issue.development_request_id = r.id
        AND issue.provider = 'github'
        AND issue.type = 'issue'
+       AND issue.id = (SELECT MIN(i2.id) FROM development_links i2 WHERE i2.development_request_id = r.id AND i2.provider = 'github' AND i2.type = 'issue')
       LEFT JOIN development_links pr
         ON pr.development_request_id = r.id
        AND pr.provider = 'github'
        AND pr.type = 'pull_request'
+       AND pr.id = (SELECT MAX(p2.id) FROM development_links p2 WHERE p2.development_request_id = r.id AND p2.provider = 'github' AND p2.type = 'pull_request')
       LEFT JOIN development_branch_states adam
         ON adam.development_request_id = r.id AND adam.branch = 'adam'
       LEFT JOIN development_branch_states joe
@@ -108,7 +128,9 @@ export async function getDevelopmentSummary(db: DevelopmentDatabase) {
         SUM(CASE WHEN overall_status = 'ready_for_main' THEN 1 ELSE 0 END) AS readyForMain,
         SUM(CASE WHEN overall_status = 'on_main_needs_verification' THEN 1 ELSE 0 END) AS onMainNeedsVerification,
         SUM(CASE WHEN overall_status = 'blocked' THEN 1 ELSE 0 END) AS blocked,
-        SUM(CASE WHEN overall_status = 'verified' THEN 1 ELSE 0 END) AS verified
+        SUM(CASE WHEN overall_status = 'verified' THEN 1 ELSE 0 END) AS verified,
+        SUM(CASE WHEN EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = development_requests.id AND json_extract(c.value, '$.conclusion') IN ('failure','cancelled','timed_out','action_required')) THEN 1 ELSE 0 END) AS ciFailing,
+        SUM(CASE WHEN EXISTS (SELECT 1 FROM development_branch_states s WHERE s.development_request_id = development_requests.id AND s.state = 'unknown') THEN 1 ELSE 0 END) AS unknownSync
       FROM development_requests
     `)
     .first<DevelopmentSummary>();
@@ -125,6 +147,8 @@ export async function getDevelopmentSummary(db: DevelopmentDatabase) {
     onMainNeedsVerification: result?.onMainNeedsVerification || 0,
     blocked: result?.blocked || 0,
     verified: result?.verified || 0,
+    ciFailing: result?.ciFailing || 0,
+    unknownSync: result?.unknownSync || 0,
   } satisfies DevelopmentSummary;
 }
 
@@ -178,6 +202,14 @@ export async function listActivity(db: DevelopmentDatabase, limit = 40) {
     .prepare("SELECT * FROM development_activity_events ORDER BY occurred_at DESC LIMIT ?")
     .bind(limit)
     .all<ActivityEvent>();
+}
+
+export async function getGitHubSyncStatus(db: DevelopmentDatabase): Promise<GitHubSyncStatus> {
+  const [lastRun, branches] = await Promise.all([
+    db.prepare("SELECT status, finished_at, error_message FROM github_sync_runs ORDER BY id DESC LIMIT 1").first<GitHubSyncStatus["lastRun"]>(),
+    db.prepare("SELECT role, branch_name, status, sha FROM github_branch_mappings ORDER BY CASE role WHEN 'adam' THEN 0 WHEN 'joe' THEN 1 WHEN 'dev' THEN 2 ELSE 3 END").all<GitHubSyncStatus["branches"][number]>(),
+  ]);
+  return { lastRun: lastRun || null, branches: branches.results || [] };
 }
 
 export function insertDevelopmentRequest(

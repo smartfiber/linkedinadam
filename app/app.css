@@ -48,6 +48,31 @@ body {
   background: rgba(255,255,255,.1);
 }
 
+.nav-group {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,.08);
+}
+
+.nav-group strong {
+  padding: 4px 14px;
+  color: #71809a;
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.nav-group a {
+  padding-block: 8px;
+}
+
+.summary-link {
+  color: inherit;
+  text-decoration: none;
+}
+
 .content {
   padding: 42px;
 }

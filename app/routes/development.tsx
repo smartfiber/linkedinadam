@@ -5,6 +5,7 @@ import { type AccessEnvironment, requireAuthenticatedUser } from "../lib/auth.se
 import {
   getDevelopmentRequest,
   getDevelopmentSummary,
+  getGitHubSyncStatus,
   listActivity,
   listDevelopmentRequests,
   listNeedsAttention,
@@ -35,6 +36,7 @@ function filtersFromUrl(url: URL): DevelopmentFilters {
     priority: DEVELOPMENT_PRIORITIES.includes(priority as never) ? priority as DevelopmentFilters["priority"] : "",
     owner: url.searchParams.get("owner") || "",
     status: DEVELOPMENT_STATUSES.includes(status as never) ? status as DevelopmentFilters["status"] : "",
+    attention: url.searchParams.get("attention") === "ci_failing" || url.searchParams.get("attention") === "unknown_sync" ? url.searchParams.get("attention") as DevelopmentFilters["attention"] : "",
   };
 }
 
@@ -44,12 +46,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const requestId = url.searchParams.get("request");
   const filters = filtersFromUrl(url);
-  const [summary, requests, attention, activity, detail] = await Promise.all([
+  const [summary, requests, attention, activity, detail, github] = await Promise.all([
     getDevelopmentSummary(env.linkedinadam_db),
     listDevelopmentRequests(env.linkedinadam_db, filters),
     listNeedsAttention(env.linkedinadam_db, user.email),
     listActivity(env.linkedinadam_db),
     requestId ? getDevelopmentRequest(env.linkedinadam_db, requestId) : null,
+    getGitHubSyncStatus(env.linkedinadam_db),
   ]);
 
   return {
@@ -60,6 +63,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     detail,
     filters,
     user,
+    github,
   };
 }
 
@@ -100,6 +104,9 @@ export async function action({ request, context }: Route.ActionArgs) {
 function SummaryCard({ label, value, tone = "" }: { label: string; value: number; tone?: string }) {
   return <article className={`development-summary-card ${tone}`}><span>{label}</span><strong>{value}</strong></article>;
 }
+function SummaryLink({ label, value, to, tone = "" }: { label: string; value: number; to: string; tone?: string }) {
+  return <Link to={to} className="summary-link"><SummaryCard label={label} value={value} tone={tone} /></Link>;
+}
 
 function StatusBadge({ value }: { value: string }) {
   return <span className={`development-status ${statusTone(value)}`}>{statusLabel(value)}</span>;
@@ -108,7 +115,7 @@ function StatusBadge({ value }: { value: string }) {
 export default function Development({ loaderData, actionData }: Route.ComponentProps) {
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
-  const { summary, requests, attention, activity, detail, filters, user } = loaderData;
+  const { summary, requests, attention, activity, detail, filters, user, github } = loaderData;
 
   return (
     <main className="development-page">
@@ -124,20 +131,28 @@ export default function Development({ loaderData, actionData }: Route.ComponentP
       <section className="development-summary-grid" aria-label="Development summary">
         <SummaryCard label="P0 Open" value={summary.p0Open} tone="critical" />
         <SummaryCard label="P1 Open" value={summary.p1Open} tone="critical" />
-        <SummaryCard label="Awaiting Adam" value={summary.awaitingAdam} />
-        <SummaryCard label="Awaiting Joe" value={summary.awaitingJoe} />
+        <SummaryLink label="Awaiting Adam" value={summary.awaitingAdam} to="/development?status=awaiting_adam" />
+        <SummaryLink label="Awaiting Joe" value={summary.awaitingJoe} to="/development?status=awaiting_joe" />
         <SummaryCard label="Awaiting Mutual Approval" value={summary.awaitingMutualApproval} />
-        <SummaryCard label="Ready for Dev" value={summary.readyForDev} />
-        <SummaryCard label="On Dev" value={summary.onDev} />
-        <SummaryCard label="Ready for Main" value={summary.readyForMain} />
-        <SummaryCard label="On Main / Needs Verification" value={summary.onMainNeedsVerification} />
-        <SummaryCard label="Blocked" value={summary.blocked} tone="critical" />
+        <SummaryLink label="Ready for Dev" value={summary.readyForDev} to="/development?status=ready_for_dev" />
+        <SummaryLink label="On Dev" value={summary.onDev} to="/development?status=on_dev" />
+        <SummaryLink label="Ready for Main" value={summary.readyForMain} to="/development?status=ready_for_main" />
+        <SummaryLink label="On Main / Needs Verification" value={summary.onMainNeedsVerification} to="/development?status=on_main_needs_verification" />
+        <SummaryLink label="CI Failing" value={summary.ciFailing} to="/development?attention=ci_failing" tone="critical" />
+        <SummaryLink label="Blocked" value={summary.blocked} to="/development?status=blocked" tone="critical" />
+        <SummaryLink label="Unknown Sync" value={summary.unknownSync} to="/development?attention=unknown_sync" />
         <SummaryCard label="Verified" value={summary.verified} tone="complete" />
       </section>
 
       <section className="development-attention panel">
         <div className="panel-heading"><div><p className="eyebrow">PERSONAL QUEUE</p><h2>Needs Your Attention</h2></div><span>{attention.length}</span></div>
         {attention.length ? <ul className="attention-list">{attention.map((item) => <li key={item.id}><Link to={`/development?request=${item.id}`}>{item.priority} · {item.title}</Link><span>{item.next_action || statusLabel(item.overall_status)}</span></li>)}</ul> : <p className="empty-state">Nothing currently requires action for {user.displayName}.</p>}
+      </section>
+
+      <section className="development-attention panel">
+        <div className="panel-heading"><div><p className="eyebrow">READ-ONLY INTEGRATION</p><h2>GitHub sync</h2></div><span>{github.lastRun?.status || "Not configured"}</span></div>
+        <p>{github.lastRun?.error_message || (github.lastRun?.finished_at ? `Last sync ${github.lastRun.finished_at}.` : "Configure a read-only GitHub App to begin polling colossalbreacker/net-x.")}</p>
+        <div className="branch-list">{github.branches.length ? github.branches.map(branch => <span key={branch.role}><strong>{branch.role}</strong> {branch.branch_name || branch.status}{branch.sha ? ` · ${branch.sha.slice(0, 8)}` : ""}</span>) : <span>Branch mapping will appear after the first sync.</span>}</div>
       </section>
 
       <section className="development-toolbar panel">
@@ -153,7 +168,7 @@ export default function Development({ loaderData, actionData }: Route.ComponentP
 
       <section className="development-table-panel panel">
         <div className="panel-heading"><div><p className="eyebrow">SYSTEM OF RECORD</p><h2>Development requests</h2></div><span>{requests.length} shown</span></div>
-        <div className="table-scroll"><table className="development-table"><thead><tr>{["Request", "Priority", "Type", "Requested By", "Owner", "QA Partner", "Area", "Issue / PR", "Adam", "Joe", "Approval", "Dev", "Main", "Verification", "Next Action", "Updated"].map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{requests.length ? requests.map((item) => <tr key={item.id}><td><Link to={`/development?request=${item.id}`}><strong>{item.external_key || item.id.slice(0, 8)}</strong><span>{item.title}</span></Link><StatusBadge value={item.overall_status} /></td><td><span className={`priority-badge ${item.priority.toLowerCase()}`}>{item.priority}</span></td><td>{item.type}</td><td>{item.requested_by_name}</td><td>{item.owner_email || "—"}</td><td>{item.qa_partner_email || "—"}</td><td>{item.product_area || "—"}</td><td>{item.issue_url || item.pr_url ? <span className="link-stack">{item.issue_url ? <a href={item.issue_url}>Issue</a> : null}{item.pr_url ? <a href={item.pr_url}>PR</a> : null}</span> : "—"}</td><td><StatusBadge value={item.adam_state} /></td><td><StatusBadge value={item.joe_state} /></td><td><StatusBadge value={item.approval_state} /></td><td><StatusBadge value={item.dev_state} /></td><td><StatusBadge value={item.main_state} /></td><td><StatusBadge value={item.overall_status === "verified" ? "verified" : item.main_state === "present" ? "awaiting_verification" : "unknown"} /></td><td>{item.next_action}</td><td>{item.updated_at}</td></tr>) : <tr><td colSpan={16} className="empty-table">No development requests yet. Create the first record below.</td></tr>}</tbody></table></div>
+        <div className="table-scroll"><table className="development-table"><thead><tr>{["Request", "Issue", "PR", "CI", "Branch", "Adam", "Joe", "Dev", "Main", "Next Action", "Updated"].map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{requests.length ? requests.map((item) => <tr key={item.id}><td><Link to={`/development?request=${item.id}`}><strong>{item.external_key || item.id.slice(0, 8)}</strong><span>{item.title}</span></Link><StatusBadge value={item.overall_status} /></td><td>{item.issue_url ? <a href={item.issue_url}>#{item.issue_number}</a> : "—"}</td><td>{item.pr_url ? <a href={item.pr_url}>#{item.pr_number} · {item.pr_state}</a> : "—"}</td><td><StatusBadge value={item.ci_state || "CI Unknown"} /></td><td>{item.source_branch ? <span className="link-stack"><code>{item.source_branch}</code><span>→ {item.target_branch}</span></span> : "—"}</td><td><StatusBadge value={item.adam_state} /></td><td><StatusBadge value={item.joe_state} /></td><td><StatusBadge value={item.dev_state} /></td><td><StatusBadge value={item.main_state} /></td><td>{item.next_action}</td><td>{item.updated_at}</td></tr>) : <tr><td colSpan={11} className="empty-table">No development requests yet. Create the first record below.</td></tr>}</tbody></table></div>
       </section>
 
       <div className="development-lower-grid">

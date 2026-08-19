@@ -1868,20 +1868,29 @@ export default function Home({
             Command Center
           </a>
           <a href="/development">Development</a>
-          <a href="#people" className="future-nav">People <small>Coming Soon</small></a>
-          <a href="#outreach" className="future-nav">Outreach <small>Coming Soon</small></a>
-          <a href="#employees">Employees</a>
-          <a href="/playbooks">Playbooks</a>
-          <a href="/connections">Connections</a>
-          <a href="/operations">Today &amp; Tomorrow</a>
-          <a href="#content">Content</a>
-          <a href="/calendar">Calendar</a>
-          <a href="/orchestration">Post Orchestration</a>
-          <a href="/planner">Planner</a>
-          <a href="/analytics">Analytics</a>
-          <a href="#activity">Activity</a>
-          <a href="#add-employee">Add Employee</a>
-          <a href="#agents">Agents</a>
+          <div className="nav-group">
+            <strong>Content &amp; LinkedIn</strong>
+            <a href="#content">Content</a>
+            <a href="/playbooks">Playbooks</a>
+            <a href="/calendar">Calendar</a>
+            <a href="/orchestration">Post Orchestration</a>
+            <a href="/planner">Planner</a>
+            <a href="/connections">Connections</a>
+            <a href="#employees">Employees / LinkedIn profiles</a>
+            <a href="/analytics">Analytics</a>
+            <a href="/operations">Automation / Today &amp; Tomorrow</a>
+          </div>
+          <div className="nav-group">
+            <strong>People &amp; Outreach</strong>
+            <a href="#people" className="future-nav">People <small>Coming Soon</small></a>
+            <a href="#outreach" className="future-nav">Outreach <small>Coming Soon</small></a>
+          </div>
+          <div className="nav-group">
+            <strong>Workspace</strong>
+            <a href="#activity">Activity</a>
+            <a href="#add-employee">Add Employee</a>
+            <a href="#agents">Agents</a>
+          </div>
           <a href="#newsletters" className="future-nav">Newsletters <small>Coming Soon</small></a>
           <a href="#settings" className="future-nav">Settings <small>Coming Soon</small></a>
         </nav>
