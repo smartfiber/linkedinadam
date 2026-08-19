@@ -7,6 +7,11 @@ import {
 export default [
   index("routes/home.tsx"),
   route("development", "routes/development.tsx"),
+  route("development/console", "routes/development-console.tsx"),
+  route("content-linkedin", "routes/content-linkedin.tsx"),
+  route("people", "routes/people.tsx"),
+  route("outreach", "routes/outreach.tsx"),
+  route("newsletters", "routes/newsletters.tsx"),
   route("calendar", "routes/calendar.tsx"),
   route("analytics", "routes/analytics.tsx"),
   route("planner", "routes/planner.tsx"),

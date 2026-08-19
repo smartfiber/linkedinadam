@@ -37,6 +37,15 @@ function queryParts(filters: DevelopmentFilters) {
   if (filters.attention === "unknown_sync") {
     where.push("EXISTS (SELECT 1 FROM development_branch_states s WHERE s.development_request_id = r.id AND s.state = 'unknown')");
   }
+  const viewClauses: Partial<Record<NonNullable<DevelopmentFilters["view"]>, string>> = {
+    needs_adam: "r.overall_status = 'awaiting_adam'", needs_joe: "r.overall_status = 'awaiting_joe'",
+    urgent: "r.priority IN ('P0','P1') AND r.overall_status NOT IN ('verified','closed')",
+    awaiting_approval: "r.overall_status = 'awaiting_mutual_approval'", ready_dev: "r.overall_status = 'ready_for_dev'",
+    on_dev: "r.overall_status = 'on_dev'", ready_main: "r.overall_status = 'ready_for_main'",
+    main_verify: "r.overall_status = 'on_main_needs_verification'", blocked: "r.overall_status = 'blocked'",
+    sync_unknown: "EXISTS (SELECT 1 FROM development_branch_states s WHERE s.development_request_id = r.id AND s.state = 'unknown')",
+  };
+  if (filters.view && viewClauses[filters.view]) where.push(viewClauses[filters.view]!);
 
   return {
     clause: where.length ? `WHERE ${where.join(" AND ")}` : "",
@@ -106,9 +115,7 @@ export async function listDevelopmentRequests(
       LEFT JOIN development_branch_states main_branch
         ON main_branch.development_request_id = r.id AND main_branch.branch = 'main'
       ${query.clause}
-      ORDER BY
-        CASE r.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
-        r.updated_at DESC
+      ORDER BY ${filters.sort === "updated" ? "r.updated_at DESC" : filters.sort === "next_action" ? "next_action ASC, r.updated_at DESC" : "CASE r.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, r.updated_at DESC"}
     `)
     .bind(...query.bindings)
     .all<DevelopmentRequest>();

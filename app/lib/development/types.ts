@@ -105,6 +105,8 @@ export type DevelopmentFilters = {
   owner?: string;
   status?: DevelopmentStatus | "";
   attention?: "ci_failing" | "unknown_sync" | "";
+  view?: "needs_adam" | "needs_joe" | "urgent" | "awaiting_approval" | "ready_dev" | "on_dev" | "ready_main" | "main_verify" | "blocked" | "sync_unknown" | "";
+  sort?: "updated" | "priority" | "next_action";
 };
 
 export type ActivityEvent = {

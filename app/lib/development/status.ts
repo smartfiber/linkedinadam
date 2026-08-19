@@ -20,8 +20,9 @@ export function statusLabel(status: string) {
 }
 
 export function statusTone(status: string) {
-  if (status === "blocked") return "blocked";
-  if (status === "verified" || status === "closed") return "complete";
-  if (status.startsWith("awaiting")) return "attention";
+  const normalized = status.toLowerCase().replaceAll(" ", "_");
+  if (["blocked", "failed", "rejected", "ci_failing", "conflict"].includes(normalized)) return "blocked";
+  if (["verified", "closed", "passed", "approved", "present", "patch_equivalent", "ci_passed"].includes(normalized)) return "complete";
+  if (normalized.startsWith("awaiting") || ["pending", "unknown", "ci_unknown", "needs_review", "needs_merge"].includes(normalized)) return "attention";
   return "progress";
 }
