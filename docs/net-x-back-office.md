@@ -126,16 +126,29 @@ GITHUB_APP_PRIVATE_KEY=<GitHub App private key>
 GITHUB_APP_INSTALLATION_ID=<installation id for colossalbreacker/net-x>
 ```
 
-Create a GitHub App, set **Repository permissions** to `Read-only` for
+Create the App under the account or organization that should control it. Use
+the deployed Worker URL as the homepage, do not request user authorization,
+and leave webhooks inactive. Set **Repository permissions** to `Read-only` for
 **Contents** (commits, branches, and compare), **Issues**, **Pull requests**
 (including reviews), **Checks**, and **Commit statuses**. Metadata read access
-is supplied by GitHub. Give the App no organization or account permissions,
-install it only on `colossalbreacker/net-x`, generate a private key, and copy
-the App and installation IDs. Add the three credentials with `wrangler secret
-put GITHUB_APP_ID`, `wrangler secret put GITHUB_APP_PRIVATE_KEY`, and
-`wrangler secret put GITHUB_APP_INSTALLATION_ID`; set the repository variables
-and `GITHUB_SYNC_ENABLED` in Worker configuration. Never prefix any of these
-variables with `VITE_` or return them from a route loader.
+is supplied by GitHub. Give the App no organization or account permissions.
+Select **Only on this account** when the App is owned by the target account;
+otherwise select **Any account** so the repository owner can approve it.
+
+From the App's **Install App** page, install it using **Only select
+repositories** and choose only `colossalbreacker/net-x`. Generate a private
+key, then copy the App ID from the App settings and the numeric installation ID
+from the installation settings URL. The downloaded GitHub PKCS#1 PEM key can
+be used directly; the adapter converts it to PKCS#8 in memory for Web Crypto.
+
+Add the three credentials with `wrangler secret put GITHUB_APP_ID`, `wrangler
+secret put GITHUB_APP_PRIVATE_KEY`, and `wrangler secret put
+GITHUB_APP_INSTALLATION_ID`. The repository variables and
+`GITHUB_SYNC_ENABLED` are committed in `wrangler.json`. Never prefix any of
+these values with `VITE_`, commit a downloaded PEM file, or return the values
+from a route loader. Before enabling production sync, confirm migrations
+`0015_add_development_foundation.sql` and `0016_add_github_sync.sql` have been
+applied to the remote D1 database after the documented backup/rehearsal.
 
 Until those values exist, scheduled sync reports a configuration error and
 does not create records. If webhooks are enabled later, create a separate

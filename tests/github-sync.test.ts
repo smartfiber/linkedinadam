@@ -1,5 +1,7 @@
+import { generateKeyPairSync } from "node:crypto";
+import { importPKCS8 } from "jose";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_NET_X_REPOSITORY, githubConfigurationError, repositoryFromEnvironment } from "../app/lib/integrations/github.server";
+import { DEFAULT_NET_X_REPOSITORY, githubConfigurationError, normalizeGitHubAppPrivateKey, repositoryFromEnvironment } from "../app/lib/integrations/github.server";
 import { checkState, computeBranchState, discoverBranchMappings, issueNumbersFromText, nextActionForPullRequest, patchEquivalence } from "../app/lib/development/sync.server";
 import { supportedGitHubWebhookEvent, verifyGitHubWebhookSignature } from "../app/lib/integrations/github-webhook.server";
 
@@ -14,6 +16,16 @@ describe("read-only GitHub sync helpers", () => {
   it("fails closed when the read-only App is not configured", () => {
     expect(githubConfigurationError({})).toContain("GITHUB_APP_ID");
     expect(githubConfigurationError({ GITHUB_APP_ID: "1", GITHUB_APP_PRIVATE_KEY: "key", GITHUB_APP_INSTALLATION_ID: "2" })).toBeNull();
+  });
+
+  it("accepts GitHub's downloaded PKCS#1 key and escaped secret newlines", async () => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const pkcs1 = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
+    const normalized = normalizeGitHubAppPrivateKey(pkcs1.replace(/\n/g, "\\n"));
+    expect(normalized).toContain("-----BEGIN PRIVATE KEY-----");
+    await expect(importPKCS8(normalized, "RS256")).resolves.toBeDefined();
+    expect(normalizeGitHubAppPrivateKey(normalized)).toBe(normalized);
+    expect(() => normalizeGitHubAppPrivateKey("not a key")).toThrow("PKCS#1 or PKCS#8");
   });
 
   it("discovers exact branches and flags ambiguous Joe mappings", () => {

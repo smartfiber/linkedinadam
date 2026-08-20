@@ -44,14 +44,63 @@ export function githubConfigurationError(env: GitHubEnvironment) {
   return missing.length ? `GitHub App is not configured: ${missing.join(", ")}.` : null;
 }
 
-function parsePrivateKey(value: string) { return value.replace(/\\n/g, "\n").trim(); }
+function concatenateBytes(...parts: Uint8Array[]) {
+  const result = new Uint8Array(parts.reduce((length, part) => length + part.length, 0));
+  let offset = 0;
+  for (const part of parts) { result.set(part, offset); offset += part.length; }
+  return result;
+}
+
+function derLength(length: number) {
+  if (length < 128) return new Uint8Array([length]);
+  const bytes: number[] = [];
+  for (let remaining = length; remaining > 0; remaining >>= 8) bytes.unshift(remaining & 0xff);
+  return new Uint8Array([0x80 | bytes.length, ...bytes]);
+}
+
+function derElement(tag: number, body: Uint8Array) {
+  return concatenateBytes(new Uint8Array([tag]), derLength(body.length), body);
+}
+
+function decodePemBody(pem: string) {
+  const body = pem.replace(/-----BEGIN [^-]+-----|-----END [^-]+-----|\s/g, "");
+  const binary = atob(body);
+  return Uint8Array.from(binary, character => character.charCodeAt(0));
+}
+
+function encodePem(label: string, bytes: Uint8Array) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const lines = btoa(binary).match(/.{1,64}/g)?.join("\n") || "";
+  return `-----BEGIN ${label}-----\n${lines}\n-----END ${label}-----`;
+}
+
+/**
+ * GitHub downloads App keys as PKCS#1 (`RSA PRIVATE KEY`) while Web Crypto and
+ * jose import PKCS#8 (`PRIVATE KEY`). Wrap the PKCS#1 bytes in a PKCS#8
+ * PrivateKeyInfo structure so the downloaded key works without manual OpenSSL
+ * conversion. Already-converted PKCS#8 keys remain supported.
+ */
+export function normalizeGitHubAppPrivateKey(value: string) {
+  const pem = value.replace(/\\n/g, "\n").trim();
+  if (pem.includes("-----BEGIN PRIVATE KEY-----")) return pem;
+  if (!pem.includes("-----BEGIN RSA PRIVATE KEY-----")) {
+    throw new Error("GITHUB_APP_PRIVATE_KEY must be an unencrypted PKCS#1 or PKCS#8 PEM private key.");
+  }
+
+  const version = new Uint8Array([0x02, 0x01, 0x00]);
+  const rsaEncryptionAlgorithm = new Uint8Array([0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00]);
+  const privateKey = derElement(0x04, decodePemBody(pem));
+  return encodePem("PRIVATE KEY", derElement(0x30, concatenateBytes(version, rsaEncryptionAlgorithm, privateKey)));
+}
+
 function githubHeaders(token: string) {
   return { accept: "application/vnd.github+json", authorization: `Bearer ${token}`, "x-github-api-version": "2022-11-28", "user-agent": "Net-X-Back-Office" };
 }
 async function appToken(env: GitHubEnvironment) {
   const error = githubConfigurationError(env); if (error) throw new Error(error);
   const now = Math.floor(Date.now() / 1000);
-  const key = await importPKCS8(parsePrivateKey(env.GITHUB_APP_PRIVATE_KEY!), "RS256");
+  const key = await importPKCS8(normalizeGitHubAppPrivateKey(env.GITHUB_APP_PRIVATE_KEY!), "RS256");
   const jwt = await new SignJWT({}).setProtectedHeader({ alg: "RS256", typ: "JWT" }).setIssuer(env.GITHUB_APP_ID!).setIssuedAt(now - 30).setExpirationTime(now + 9 * 60).sign(key);
   const response = await fetch(`https://api.github.com/app/installations/${encodeURIComponent(env.GITHUB_APP_INSTALLATION_ID!)}/access_tokens`, { method: "POST", headers: githubHeaders(jwt) });
   if (!response.ok) throw new Error(`GitHub installation token failed (${response.status}).`);
