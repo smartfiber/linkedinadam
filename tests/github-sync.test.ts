@@ -1,5 +1,7 @@
+import { generateKeyPairSync } from "node:crypto";
+import { importPKCS8, importSPKI, jwtVerify, SignJWT } from "jose";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_NET_X_REPOSITORY, githubConfigurationError, repositoryFromEnvironment } from "../app/lib/integrations/github.server";
+import { DEFAULT_NET_X_REPOSITORY, githubConfigurationError, normalizeGitHubAppPrivateKey, repositoryFromEnvironment } from "../app/lib/integrations/github.server";
 import { checkState, computeBranchState, discoverBranchMappings, issueNumbersFromText, nextActionForPullRequest, patchEquivalence } from "../app/lib/development/sync.server";
 import { supportedGitHubWebhookEvent, verifyGitHubWebhookSignature } from "../app/lib/integrations/github-webhook.server";
 
@@ -14,6 +16,25 @@ describe("read-only GitHub sync helpers", () => {
   it("fails closed when the read-only App is not configured", () => {
     expect(githubConfigurationError({})).toContain("GITHUB_APP_ID");
     expect(githubConfigurationError({ GITHUB_APP_ID: "1", GITHUB_APP_PRIVATE_KEY: "key", GITHUB_APP_INSTALLATION_ID: "2" })).toBeNull();
+  });
+
+  it("accepts GitHub's downloaded PKCS#1 key and preserves valid RS256 signing", async () => {
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const pkcs1 = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
+    const normalized = normalizeGitHubAppPrivateKey(pkcs1.replace(/\n/g, "\\n"));
+    expect(normalized).toContain("-----BEGIN PRIVATE KEY-----");
+    const signingKey = await importPKCS8(normalized, "RS256");
+    const verificationKey = await importSPKI(publicKey.export({ type: "spki", format: "pem" }).toString(), "RS256");
+    const token = await new SignJWT({ scope: "read-only" }).setProtectedHeader({ alg: "RS256" }).setIssuer("123").sign(signingKey);
+    await expect(jwtVerify(token, verificationKey, { algorithms: ["RS256"], issuer: "123" })).resolves.toMatchObject({ payload: { scope: "read-only" } });
+    expect(normalizeGitHubAppPrivateKey(normalized)).toBe(normalized);
+  });
+
+  it("fails closed for malformed PEM, Base64, and DER key material", async () => {
+    expect(() => normalizeGitHubAppPrivateKey("not a key")).toThrow("PKCS#1 or PKCS#8");
+    expect(() => normalizeGitHubAppPrivateKey("-----BEGIN RSA PRIVATE KEY-----\n%%%\n-----END RSA PRIVATE KEY-----")).toThrow();
+    const malformedDer = normalizeGitHubAppPrivateKey("-----BEGIN RSA PRIVATE KEY-----\nAQID\n-----END RSA PRIVATE KEY-----");
+    await expect(importPKCS8(malformedDer, "RS256")).rejects.toThrow();
   });
 
   it("discovers exact branches and flags ambiguous Joe mappings", () => {
