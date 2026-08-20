@@ -129,6 +129,24 @@ async function paged<T>(token: string, path: string, map: (value: unknown) => T[
   return values;
 }
 
+export async function mapWithConcurrency<T, U>(values: T[], limit: number, operation: (value: T, index: number) => Promise<U>) {
+  const results = new Array<U>(values.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < values.length) {
+      const index = nextIndex; nextIndex += 1;
+      results[index] = await operation(values[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, limit), values.length) }, worker));
+  return results;
+}
+
+export const MAX_SYNC_PULL_REQUESTS = 50;
+export function boundedPullRequests<T>(values: T[]) {
+  return values.slice(0, MAX_SYNC_PULL_REQUESTS);
+}
+
 export function createGitHubReadAdapter(env: GitHubEnvironment): GitHubReadAdapter {
   const repository = repositoryFromEnvironment(env); let tokenPromise: Promise<string> | undefined; const token = () => tokenPromise ||= appToken(env);
   const base = `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}`;
@@ -139,8 +157,8 @@ export function createGitHubReadAdapter(env: GitHubEnvironment): GitHubReadAdapt
       return raw.filter(value => !value.pull_request).map(value => ({ id: Number(value.id), number: Number(value.number), title: String(value.title || ""), body: typeof value.body === "string" ? value.body : null, state: value.state === "closed" ? "closed" : "open", labels: Array.isArray(value.labels) ? value.labels.map(label => String((label as { name?: unknown }).name || "")) : [], author: typeof (value.user as { login?: unknown } | null)?.login === "string" ? (value.user as { login: string }).login : null, htmlUrl: String(value.html_url || ""), createdAt: String(value.created_at || ""), updatedAt: String(value.updated_at || ""), closedAt: typeof value.closed_at === "string" ? value.closed_at : null }));
     },
     async listPullRequests() {
-      const rows = await paged<Record<string, unknown>>(await token(), `${base}/pulls?state=all`, value => Array.isArray(value) ? value as Record<string, unknown>[] : []);
-      return Promise.all(rows.map(async value => {
+      const rows = boundedPullRequests(await paged<Record<string, unknown>>(await token(), `${base}/pulls?state=all`, value => Array.isArray(value) ? value as Record<string, unknown>[] : []));
+      return mapWithConcurrency(rows, 8, async value => {
         const number = Number(value.number); const details = await githubRequest<Record<string, unknown>>(await token(), `${base}/pulls/${number}`);
         const headSha = String((details.head as { sha?: unknown })?.sha || "");
         const [reviews, files, checks, statuses] = await Promise.all([
@@ -156,7 +174,7 @@ export function createGitHubReadAdapter(env: GitHubEnvironment): GitHubReadAdapt
         const checkRuns: GitHubCheckSnapshot[] = Array.isArray(checks.check_runs) ? checks.check_runs.map(check => ({ name: String(check.name || ""), status: String(check.status || ""), conclusion: typeof check.conclusion === "string" ? check.conclusion : null, detailsUrl: typeof check.html_url === "string" ? check.html_url : null })) : [];
         const commitStatuses: GitHubCheckSnapshot[] = Array.isArray(statuses.statuses) ? statuses.statuses.map(status => ({ name: String(status.context || "commit status"), status: ["success", "failure", "error"].includes(String(status.state)) ? "completed" : "in_progress", conclusion: status.state === "success" ? "success" : status.state === "failure" || status.state === "error" ? "failure" : null, detailsUrl: typeof status.target_url === "string" ? status.target_url : null })) : [];
         return { id: Number(details.id || value.id), number, title: String(details.title || value.title || ""), body: typeof details.body === "string" ? details.body : null, state: details.state === "closed" ? "closed" : "open", draft: Boolean(details.draft), sourceBranch: String((details.head as { ref?: unknown })?.ref || ""), targetBranch: String((details.base as { ref?: unknown })?.ref || ""), headSha, mergeSha: typeof details.merge_commit_sha === "string" ? details.merge_commit_sha : null, merged: Boolean(details.merged), mergeable: typeof details.mergeable === "boolean" ? details.mergeable : null, author: typeof (details.user as { login?: unknown } | null)?.login === "string" ? (details.user as { login: string }).login : null, reviewers: Array.from(new Set([...requested, ...latestReviews.keys()].filter(Boolean))), approvals: Array.from(latestReviews.values()).filter(review => review.state === "APPROVED").length, changedFiles: Array.isArray(files) ? files.map(changedFile).filter(file => file.filename) : [], checks: [...checkRuns, ...commitStatuses], htmlUrl: String(details.html_url || value.html_url || ""), createdAt: String(details.created_at || value.created_at || ""), updatedAt: String(details.updated_at || value.updated_at || ""), mergedAt: typeof details.merged_at === "string" ? details.merged_at : null } satisfies GitHubPullRequestSnapshot;
-      }));
+      });
     },
     async listBranches() {
       const rows = await paged<Record<string, unknown>>(await token(), `${base}/branches`, value => Array.isArray(value) ? value as Record<string, unknown>[] : []);
