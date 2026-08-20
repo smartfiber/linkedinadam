@@ -1,5 +1,6 @@
 import {
   createGitHubReadAdapter,
+  GitHubAPIError,
   githubConfigurationError,
   type GitHubBranchSnapshot,
   type GitHubChangedFileSnapshot,
@@ -12,6 +13,17 @@ import {
 import { insertActivity } from "./repository.server";
 
 type SyncDatabase = D1Database;
+
+class GitHubSyncStageError extends Error {
+  constructor(readonly stage: string, readonly originalError: unknown) {
+    super(originalError instanceof Error ? originalError.message : "GitHub synchronization stage failed.");
+  }
+}
+
+async function atStage<T>(stage: string, operation: () => Promise<T>) {
+  try { return await operation(); }
+  catch (error) { throw new GitHubSyncStageError(stage, error); }
+}
 
 export type GitHubSyncOptions = {
   trigger?: "scheduled" | "manual_readiness";
@@ -126,8 +138,17 @@ async function link(db: SyncDatabase, requestId: string, type: "issue" | "pull_r
 }
 
 function safeSyncError(error: unknown) {
-  if (error instanceof Error && /^GitHub (?:API|installation token)/.test(error.message)) return error.message.slice(0, 500);
+  const original = error instanceof GitHubSyncStageError ? error.originalError : error;
+  if (original instanceof Error && /^GitHub (?:API|installation token)/.test(original.message)) return original.message.slice(0, 500);
   return "GitHub read-only synchronization failed.";
+}
+
+function safeSyncDiagnostic(error: unknown) {
+  const stage = error instanceof GitHubSyncStageError ? error.stage : "unknown";
+  const original = error instanceof GitHubSyncStageError ? error.originalError : error;
+  if (original instanceof GitHubAPIError) return { stage, category: "github_api", endpoint: original.endpoint, httpStatus: original.status, requestId: original.requestId, rateLimitRemaining: original.rateLimitRemaining, retryAfter: original.retryAfter, message: original.message.slice(0, 500) };
+  const message = original instanceof Error ? original.message : "Unknown runtime failure.";
+  return { stage, category: /subrequest/i.test(message) ? "worker_subrequest_limit" : "runtime", endpoint: null, httpStatus: null, requestId: null, message: message.slice(0, 500) };
 }
 
 export async function syncNetXRepository(db: SyncDatabase, env: GitHubEnvironment, options: GitHubSyncOptions = {}) {
@@ -140,7 +161,7 @@ export async function syncNetXRepository(db: SyncDatabase, env: GitHubEnvironmen
   await db.prepare("INSERT INTO development_activity_events (actor_type, actor_identity, event_type, source, summary, metadata_json) VALUES (?, ?, 'github_sync_started', 'github', ?, ?)")
     .bind(trigger === "manual_readiness" ? "HUMAN" : "SYSTEM", initiator, `GitHub ${trigger === "manual_readiness" ? "readiness " : ""}sync started.`, JSON.stringify({ syncRunId: run.id, trigger })).run();
   try {
-    const adapter = options.adapter || createGitHubReadAdapter(env); const [issues, pullRequests, branches] = await Promise.all([adapter.listIssues(), adapter.listPullRequests(), adapter.listBranches()]);
+    const adapter = options.adapter || createGitHubReadAdapter(env); const [issues, pullRequests, branches] = await Promise.all([atStage("issues", () => adapter.listIssues()), atStage("pull_requests", () => adapter.listPullRequests()), atStage("branches", () => adapter.listBranches())]);
     let created = 0; let matched = 0; let ambiguous = 0;
     for (const issue of issues) {
       const reconciledId = await reconcileExistingRequest(db, "issue", issue.number, issue.htmlUrl);
@@ -181,7 +202,7 @@ export async function syncNetXRepository(db: SyncDatabase, env: GitHubEnvironmen
     const message = safeSyncError(error);
     await db.prepare("UPDATE github_sync_runs SET status = 'failed', error_message = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?").bind(message, run?.id || 0).run();
     await db.prepare("INSERT INTO development_activity_events (actor_type, actor_identity, event_type, source, summary, metadata_json) VALUES (?, ?, 'github_sync_failed', 'github', ?, ?)")
-      .bind(trigger === "manual_readiness" ? "HUMAN" : "SYSTEM", initiator, `GitHub ${trigger === "manual_readiness" ? "readiness " : ""}sync failed.`, JSON.stringify({ syncRunId: run.id, trigger })).run();
+      .bind(trigger === "manual_readiness" ? "HUMAN" : "SYSTEM", initiator, `GitHub ${trigger === "manual_readiness" ? "readiness " : ""}sync failed.`, JSON.stringify({ syncRunId: run.id, trigger, diagnostic: safeSyncDiagnostic(error) })).run();
     return { status: "failed" as const, runId: run.id, error: message, issues: 0, pullRequests: 0, branches: 0, created: 0, matched: 0, ambiguous: 0, skipped: 0, conflicts: 0 };
   }
 }

@@ -107,14 +107,17 @@ async function appToken(env: GitHubEnvironment) {
   const payload = await response.json() as { token?: string }; if (!payload.token) throw new Error("GitHub installation token was missing."); return payload.token;
 }
 export class GitHubAPIError extends Error {
-  constructor(message: string, readonly status: number, readonly rateLimitRemaining: number | null, readonly retryAfter: number | null) { super(message); }
+  constructor(message: string, readonly status: number, readonly rateLimitRemaining: number | null, readonly retryAfter: number | null, readonly endpoint: string, readonly requestId: string | null) { super(message); }
 }
 async function githubRequest<T>(token: string, path: string): Promise<T> {
   const response = await fetch(`https://api.github.com${path}`, { headers: githubHeaders(token) });
   if (!response.ok) {
     const remaining = response.headers.get("x-ratelimit-remaining");
     const retryAfter = response.headers.get("retry-after");
-    throw new GitHubAPIError(`GitHub API ${response.status} for ${path} (remaining: ${remaining || "unknown"}).`, response.status, remaining === null ? null : Number(remaining), retryAfter === null ? null : Number(retryAfter));
+    const requestId = response.headers.get("x-github-request-id");
+    const payload = await response.json().catch(() => null) as { message?: unknown } | null;
+    const responseMessage = typeof payload?.message === "string" ? ` ${payload.message.slice(0, 200)}` : "";
+    throw new GitHubAPIError(`GitHub API ${response.status} for ${path} (remaining: ${remaining || "unknown"}).${responseMessage}`, response.status, remaining === null ? null : Number(remaining), retryAfter === null ? null : Number(retryAfter), path, requestId);
   }
   return response.json() as Promise<T>;
 }
@@ -142,7 +145,7 @@ export async function mapWithConcurrency<T, U>(values: T[], limit: number, opera
   return results;
 }
 
-export const MAX_SYNC_PULL_REQUESTS = 50;
+export const MAX_SYNC_PULL_REQUESTS = 3;
 export function boundedPullRequests<T>(values: T[]) {
   return values.slice(0, MAX_SYNC_PULL_REQUESTS);
 }
