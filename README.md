@@ -1,113 +1,111 @@
-# Welcome to React Router + Cloudflare Workers!
+# Net-X Back Office
 
-For the current internal operating-system foundation, see
-[`docs/net-x-back-office.md`](docs/net-x-back-office.md). The repository and
-Worker retain their existing LinkedInAdam names during this migration.
+Net-X Back Office is the internal operations application for [Net-X](https://net-x.io/).
+It combines the existing LinkedIn content workflows with a development control
+center that can read issues, pull requests, reviews, checks, and branch state
+from the Net-X GitHub repository.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/templates/tree/main/react-router-starter-template)
+The repository and Cloudflare Worker retain the historical `linkedinadam` name
+while the application migrates to the broader Net-X internal platform.
 
-![React Router Starter Template Preview](https://imagedelivery.net/wSMYJvS3Xw-n339CbDyDIA/bfdc2f85-e5c9-4c92-128b-3a6711249800/public)
+## What is included
 
-<!-- dash-content-start -->
+- LinkedIn content drafting, review, scheduling, publishing, and analytics
+- Employee profiles and writing playbooks
+- Content planning and post orchestration
+- Connection-growth and daily-operations workflows
+- A Cloudflare Access-protected development control center
+- A read-only GitHub App integration for development status
 
-A modern, production-ready template for building full-stack React applications using [React Router](https://reactrouter.com/) and the [Cloudflare Vite plugin](https://developers.cloudflare.com/workers/vite-plugin/).
+GitHub synchronization is deliberately read-only. Merges, production actions,
+external messages, publications, and destructive changes remain human-approved
+operations.
 
-## Features
+## Stack
 
-- 🚀 Server-side rendering
-- ⚡️ Hot Module Replacement (HMR)
-- 📦 Asset bundling and optimization
-- 🔄 Data loading and mutations
-- 🔒 TypeScript by default
-- 🎉 TailwindCSS for styling
-- 📖 [React Router docs](https://reactrouter.com/)
-- 🔎 Built-in Observability to monitor your Worker
-<!-- dash-content-end -->
+- React 19 and React Router 7
+- TypeScript and Vite
+- Cloudflare Workers
+- Cloudflare D1 for relational data
+- Cloudflare R2 for generated images
+- Vitest
 
-## Getting Started
+## Local development
 
-Outside of this repo, you can start a new project with this template using [C3](https://developers.cloudflare.com/pages/get-started/c3/) (the `create-cloudflare` CLI):
+Install the locked dependencies:
 
-```bash
-npm create cloudflare@latest -- --template=cloudflare/templates/react-router-starter-template
+```sh
+npm ci
 ```
 
-A live public deployment of this template is available at [https://react-router-starter-template.templates.workers.dev](https://react-router-starter-template.templates.workers.dev)
+Apply migrations to a local D1 database:
 
-### Installation
-
-Install the dependencies:
-
-```bash
-npm install
+```sh
+npx wrangler d1 migrations apply linkedinadam-db --local
 ```
 
-### Development
+For loopback-only development, configure the local identity in `.dev.vars`:
 
-Start the development server with HMR:
+```text
+BACKOFFICE_LOCAL_AUTH=true
+BACKOFFICE_ENVIRONMENT=development
+BACKOFFICE_LOCAL_USER_EMAIL=adam@net-x.io
+BACKOFFICE_LOCAL_USER_NAME=Adam
+BACKOFFICE_OWNER_EMAIL=adam@net-x.io
+```
 
-```bash
+Do not commit `.dev.vars`; it is ignored by Git. Start the application with:
+
+```sh
 npm run dev
 ```
 
-Your application will be available at `http://localhost:5173`.
+The local server is available at `http://localhost:5173`.
 
-## Typegen
+## Useful commands
 
-Generate types for your Cloudflare bindings in `wrangler.json`:
+| Command | Purpose |
+| --- | --- |
+| `npm test` | Run the complete test suite |
+| `npm run typecheck` | Generate route types and run TypeScript checks |
+| `npm run build` | Create the production application build |
+| `npm run check` | Type-check, build, and perform a Wrangler deployment dry-run |
+| `npm run preview` | Build and preview the production bundle locally |
+| `npm run deploy` | Deploy the Worker with Wrangler |
 
-```sh
-npm run typegen
+## GitHub App connection
+
+The development control center uses a server-side GitHub App rather than a
+personal access token. The App must have read-only repository permissions for
+Contents, Issues, Pull requests, Checks, and Commit statuses, with no
+organization or account permissions.
+
+Install the App only on the intended repository and configure these encrypted
+Cloudflare Worker secrets:
+
+```text
+GITHUB_APP_ID
+GITHUB_APP_PRIVATE_KEY
+GITHUB_APP_INSTALLATION_ID
 ```
 
-## Building for Production
+The repository owner, repository name, and sync switch are ordinary Worker
+variables in `wrangler.json`. GitHub's downloaded PKCS#1 PEM key is supported
+directly and is converted to PKCS#8 in memory for signing.
 
-Create a production build:
+See [the Back Office operations guide](docs/net-x-back-office.md#read-only-github-development-sync)
+for the complete registration, installation, migration, and security steps.
 
-```bash
-npm run build
-```
+## Deployment safety
 
-## Previewing the Production Build
+- Keep credentials in encrypted Worker secrets; never add them to source files
+  or expose them through `VITE_` variables.
+- Run `npm run check` before deployment.
+- Review and back up production D1 data before applying remote migrations.
+- Apply remote migrations manually; deployment does not apply them.
+- Leave GitHub webhooks disabled until a public signature-verifying route is
+  intentionally enabled.
 
-Preview the production build locally:
-
-```bash
-npm run preview
-```
-
-## Deployment
-
-If you don't have a Cloudflare account, [create one here](https://dash.cloudflare.com/sign-up)! Go to your [Workers dashboard](https://dash.cloudflare.com/?to=%2F%3Aaccount%2Fworkers-and-pages) to see your [free custom Cloudflare Workers subdomain](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/) on `*.workers.dev`.
-
-Once that's done, you can build your app:
-
-```sh
-npm run build
-```
-
-And deploy it:
-
-```sh
-npm run deploy
-```
-
-To deploy a preview URL:
-
-```sh
-npx wrangler versions upload
-```
-
-You can then promote a version to production after verification or roll it out progressively.
-
-```sh
-npx wrangler versions deploy
-```
-
-## Styling
-
-This template comes with [Tailwind CSS](https://tailwindcss.com/) already configured for a simple default starting experience. You can use whatever CSS framework you prefer.
-
----
-
-Built with ❤️ using React Router.
+The production environment is expected to sit behind Cloudflare Access. See
+[the full Back Office guide](docs/net-x-back-office.md) for identity mapping,
+database migration, approval, and provider-integration details.
