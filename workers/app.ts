@@ -8,6 +8,23 @@ import {
   type AccessEnvironment,
 } from "../app/lib/auth.server";
 
+export class DevosAgentRuntime {
+  constructor(private readonly state: DurableObjectState) {}
+
+  async fetch(request: Request) {
+    if (request.method === "GET") {
+      return Response.json((await this.state.storage.get("controlState")) || { status: "idle", runId: null });
+    }
+    if (request.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    const update = await request.json<{ runId?: string; status?: string; updatedAt?: string }>();
+    const allowed = new Set(["queued","running","completed","failed","needs_approval","cancelled"]);
+    if (!update.runId || !update.status || !allowed.has(update.status)) return new Response("Invalid control state", { status: 400 });
+    const controlState = { runId:update.runId, status:update.status, updatedAt:update.updatedAt || new Date().toISOString() };
+    await this.state.storage.put("controlState", controlState);
+    return Response.json(controlState);
+  }
+}
+
 declare module "react-router" {
   export interface AppLoadContext {
     cloudflare: {

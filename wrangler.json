@@ -15,6 +15,20 @@
       "*/15 * * * *"
     ]
   },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "DEVOS_AGENT_RUNTIME",
+        "class_name": "DevosAgentRuntime"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "devos-agent-runtime-v1",
+      "new_sqlite_classes": ["DevosAgentRuntime"]
+    }
+  ],
   "vars": {
     "VALUE_FROM_CLOUDFLARE": "Hello from Cloudflare",
     "CLOUDFLARE_ACCESS_TEAM_DOMAIN": "green-wind-7710.cloudflareaccess.com",

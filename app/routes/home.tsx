@@ -16,6 +16,8 @@ import {
 import { findScheduleConflict } from "../lib/contentWorkflow.server";
 import { requireAuthenticatedUser, type AccessEnvironment } from "../lib/auth.server";
 import { getDevelopmentSummary, listNeedsAttention } from "../lib/development/repository.server";
+import { agentControlSummary } from "../lib/agents/service.server";
+import { getAgentControlPlaneStatus } from "../lib/agents/readiness.server";
 
 type Employee = {
   id: number;
@@ -116,41 +118,6 @@ type ActivityEvent = {
   content_url: string | null;
   occurred_at: string;
 };
-
-const agents = [
-  {
-    name: "Strategy Agent",
-    description: "Assigns role, audience, positioning, targets, and guardrails.",
-  },
-  {
-    name: "Content Planner",
-    description: "Builds weekly post plans and prevents duplicate topics.",
-  },
-  {
-    name: "Post Drafting Agent",
-    description: "Drafts posts in each employee’s approved voice.",
-  },
-  {
-    name: "Connection Targeting Agent",
-    description: "Finds relevant people each employee should connect with.",
-  },
-  {
-    name: "Engagement Queue Agent",
-    description: "Surfaces posts and conversations worth engaging with.",
-  },
-  {
-    name: "Conversation Signal Agent",
-    description: "Detects buying signals, interest, and lead potential.",
-  },
-  {
-    name: "Messaging Agent",
-    description: "Drafts public replies and private follow-up messages.",
-  },
-  {
-    name: "Lead Routing Agent",
-    description: "Routes qualified conversations to the right owner.",
-  },
-];
 
 function getCurrentWeekStart() {
   const now = new Date();
@@ -388,7 +355,11 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     `)
     .bind(`${today}T00:00`, `${dayAfterTomorrow}T00:00`)
     .all<DailyHomeDraft>();
-  const [developmentSummary, developmentAttention] = await Promise.all([getDevelopmentSummary(env.linkedinadam_db), listNeedsAttention(env.linkedinadam_db, user.email)]);
+  const [developmentSummary, developmentAttention, agentStatus] = await Promise.all([getDevelopmentSummary(env.linkedinadam_db), listNeedsAttention(env.linkedinadam_db, user.email), getAgentControlPlaneStatus(env.linkedinadam_db)]);
+  if (agentStatus.state === "ERROR") throw agentStatus.error;
+  const agentSummary = agentStatus.state === "READY"
+    ? await agentControlSummary(env.linkedinadam_db)
+    : null;
 
   return {
     employees: employeeQuery.results ?? [],
@@ -402,6 +373,8 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     weekStart,
     developmentSummary,
     developmentAttention: developmentAttention.results || [],
+    agentSummary,
+    agentControlPlaneReady: agentStatus.state === "READY",
     user,
   };
 }
@@ -680,7 +653,7 @@ export async function action({ request, context }: Route.ActionArgs) {
               review_note
             )
             VALUES (?, 'approved', 'published', ?,
-              'Published directly through LinkedInAdam')
+              'Published directly through DEVOS')
           `)
           .bind(draft.id, requestedBy),
         env.linkedinadam_db
@@ -702,7 +675,7 @@ export async function action({ request, context }: Route.ActionArgs) {
             eventType,
             published.postUrn,
             published.postUrl,
-            draft.title || "Published through LinkedInAdam",
+            draft.title || "Published through DEVOS",
             JSON.stringify({
               publication_method: "linkedin_api",
               publish_attempt_id: attempt.id,
@@ -1567,7 +1540,7 @@ export async function action({ request, context }: Route.ActionArgs) {
             eventType,
             `content_draft:${draft.id}`,
             linkedinPostUrl,
-            draft.title || "Published through LinkedInAdam",
+            draft.title || "Published through DEVOS",
           ),
 
         env.linkedinadam_db
@@ -1849,6 +1822,8 @@ export default function Home({
   const weekStart = loaderData.weekStart;
   const developmentSummary = loaderData.developmentSummary;
   const developmentAttention = loaderData.developmentAttention;
+  const agentSummary = loaderData.agentSummary;
+  const agentControlPlaneReady = loaderData.agentControlPlaneReady;
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
 
@@ -1869,48 +1844,10 @@ export default function Home({
 
   return (
     <main className="dashboard">
-      <aside className="sidebar">
-        <div className="logo">LinkedInAdam</div>
-
-        <nav>
-          <a className="active" href="/">
-            Command Center
-          </a>
-          <a href="/development">Development</a>
-          <a href="/development/console">Development Console <small>Coming Soon</small></a>
-          <div className="nav-group">
-            <strong>Content &amp; LinkedIn</strong>
-            <a href="/content-linkedin">Workspace overview</a>
-            <a href="#content">Content</a>
-            <a href="/playbooks">Playbooks</a>
-            <a href="/calendar">Calendar</a>
-            <a href="/orchestration">Post Orchestration</a>
-            <a href="/planner">Planner</a>
-            <a href="/connections">Connections</a>
-            <a href="#employees">Employees / LinkedIn profiles</a>
-            <a href="/analytics">Analytics</a>
-            <a href="/operations">Automation / Today &amp; Tomorrow</a>
-          </div>
-          <div className="nav-group">
-            <strong>People &amp; Outreach</strong>
-            <a href="/people" className="future-nav">People <small>Coming Soon</small></a>
-            <a href="/outreach" className="future-nav">Outreach <small>Coming Soon</small></a>
-          </div>
-          <div className="nav-group">
-            <strong>Workspace</strong>
-            <a href="#activity">Activity</a>
-            <a href="#add-employee">Add Employee</a>
-            <a href="#agents">Agents</a>
-          </div>
-          <a href="/newsletters" className="future-nav">Newsletters <small>Coming Soon</small></a>
-          <a href="#settings" className="future-nav">Settings <small>Coming Soon</small></a>
-        </nav>
-      </aside>
-
       <section className="content">
         <header className="header">
           <div>
-            <p className="eyebrow">LINKEDIN OPERATIONS CENTER</p>
+            <p className="eyebrow">NET-X DEV OS · COMMAND CENTER</p>
             <h1>Good morning, Adam.</h1>
             <p>
               Coordinate employee content, connections, engagement,
@@ -1938,6 +1875,11 @@ export default function Home({
           <div className="panel-heading"><div><p className="eyebrow">DEVELOPMENT</p><h2>Delivery control</h2></div><a className="secondary-link" href="/development">Open Development</a></div>
           <div className="command-metrics">{[["P0 Open",developmentSummary.p0Open,"urgent"],["P1 Open",developmentSummary.p1Open,"urgent"],["Needs Adam",developmentSummary.awaitingAdam,"needs_adam"],["Needs Joe",developmentSummary.awaitingJoe,"needs_joe"],["Ready for Dev",developmentSummary.readyForDev,"ready_dev"],["Main / Verify",developmentSummary.onMainNeedsVerification,"main_verify"],["Blocked",developmentSummary.blocked,"blocked"]].map(([label,value,view]) => <a key={label} href={`/development?view=${view}`}><span>{label}</span><strong>{value}</strong></a>)}</div>
           <div className="command-attention"><h3>Needs Your Attention</h3>{developmentAttention.length ? <ul>{developmentAttention.slice(0,5).map(item => <li key={item.id}><a href={`/development?request=${item.id}`}>{item.priority} · {item.title}</a><span>{item.next_action || item.overall_status}</span></li>)}</ul> : <p>No Development items currently require {loaderData.user.displayName}.</p>}</div>
+        </section>
+
+        <section className="command-agents panel">
+          <div className="panel-heading"><div><p className="eyebrow">DEVOS AGENTS</p><h2>Agent control plane</h2></div><a className="secondary-link" href="/agents">Open Agent Control Center</a></div>
+          {agentControlPlaneReady && agentSummary ? <><div className="command-agent-metrics">{[["Active Agents",agentSummary.activeAgents],["Runs Today",agentSummary.runsToday],["Needs Approval",agentSummary.pendingApprovals],["Failed Runs",agentSummary.failedRuns]].map(([label,value])=><a href="/agents" key={label}><span>{label}</span><strong>{value}</strong></a>)}</div><p className="latest-agent-result">Latest useful result: {agentSummary.latest ? `${agentSummary.latest.agent_slug} · ${agentSummary.latest.created_at}` : "No DEVOS runs yet."}</p></> : <div className="agent-initialization-state"><strong>Agent Control Center not initialized</strong><p>Development and Content &amp; LinkedIn remain available while the agent database migration is pending.</p></div>}
         </section>
 
         <section className="dashboard-daily panel">
@@ -3073,28 +3015,6 @@ export default function Home({
           )}
         </details>
 
-        <details className="panel dashboard-section" id="agents">
-          <summary className="panel-heading">
-            <div>
-              <p className="eyebrow">AI WORKFORCE</p>
-              <h2>LinkedInAdam agents</h2>
-            </div>
-          </summary>
-
-          <div className="agent-categories">
-            {[['Development agents','Future analysis, implementation, review, and test roles.','Not connected'],['Marketing agents','Existing content planning and drafting concepts live below.','Human approval'],['Cross-functional agents','Future coordination across Development, Content, People, Outreach, and Newsletters.','Coming soon']].map(([name,purpose,status]) => <article key={name}><strong>{name}</strong><p>{purpose}</p><span>{status}</span></article>)}
-          </div>
-
-          <div className="agent-grid">
-            {agents.map((agent) => (
-              <article className="agent-card" key={agent.name}>
-                <strong>{agent.name}</strong>
-                <p>{agent.description}</p>
-                <dl><div><dt>Owner</dt><dd>Back Office</dd></div><div><dt>Permissions</dt><dd>Existing workflow only</dd></div><div><dt>Approval</dt><dd>Human required</dd></div><div><dt>Status</dt><dd>Concept / existing automation</dd></div></dl>
-              </article>
-            ))}
-          </div>
-        </details>
       </section>
     </main>
   );
