@@ -36,6 +36,8 @@
     "BACKOFFICE_OWNER_EMAIL": "adam@net-x.io",
     "BACKOFFICE_ADMIN_EMAILS": "joseph@net-x.io",
     "BACKOFFICE_ENVIRONMENT": "production",
+    "GITHUB_APP_ID": "4653503",
+    "GITHUB_APP_INSTALLATION_ID": "155240048",
     "GITHUB_REPOSITORY_OWNER": "colossalbreacker",
     "GITHUB_REPOSITORY_NAME": "net-x",
     "GITHUB_SYNC_ENABLED": "false"
