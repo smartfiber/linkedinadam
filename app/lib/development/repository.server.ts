@@ -213,7 +213,15 @@ export async function listActivity(db: DevelopmentDatabase, limit = 40) {
 
 export async function getGitHubSyncStatus(db: DevelopmentDatabase): Promise<GitHubSyncStatus> {
   const [lastRun, branches] = await Promise.all([
-    db.prepare("SELECT status, finished_at, error_message FROM github_sync_runs ORDER BY id DESC LIMIT 1").first<GitHubSyncStatus["lastRun"]>(),
+    db.prepare(`SELECT r.id, r.status, r.started_at, r.finished_at,
+      CASE WHEN r.finished_at IS NULL THEN NULL ELSE CAST((julianday(r.finished_at) - julianday(r.started_at)) * 86400 AS INTEGER) END AS duration_seconds,
+      r.issues_seen, r.pull_requests_seen, r.created_count, r.matched_count, r.ambiguous_count,
+      (SELECT COUNT(*) FROM github_branch_mappings) AS branches_seen,
+      0 AS skipped_count, 0 AS conflict_count,
+      r.error_message,
+      (SELECT json_extract(e.metadata_json, '$.trigger') FROM development_activity_events e WHERE e.event_type = 'github_sync_started' AND json_extract(e.metadata_json, '$.syncRunId') = r.id ORDER BY e.id DESC LIMIT 1) AS trigger,
+      (SELECT e.actor_identity FROM development_activity_events e WHERE e.event_type = 'github_sync_started' AND json_extract(e.metadata_json, '$.syncRunId') = r.id ORDER BY e.id DESC LIMIT 1) AS initiator
+      FROM github_sync_runs r ORDER BY r.id DESC LIMIT 1`).first<GitHubSyncStatus["lastRun"]>(),
     db.prepare("SELECT role, branch_name, status, sha FROM github_branch_mappings ORDER BY CASE role WHEN 'adam' THEN 0 WHEN 'joe' THEN 1 WHEN 'dev' THEN 2 ELSE 3 END").all<GitHubSyncStatus["branches"][number]>(),
   ]);
   return { lastRun: lastRun || null, branches: branches.results || [] };

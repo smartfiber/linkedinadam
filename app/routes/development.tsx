@@ -2,6 +2,8 @@ import { Form, Link, useNavigation } from "react-router";
 import type { Route } from "./+types/development";
 import { QaHandoffCard } from "../components/QaHandoffCard";
 import { type AccessEnvironment, requireAuthenticatedUser } from "../lib/auth.server";
+import type { GitHubEnvironment } from "../lib/integrations/github.server";
+import { runManualGitHubReadinessSync } from "../lib/development/github-readiness.server";
 import {
   getDevelopmentRequest,
   getDevelopmentSummary,
@@ -24,7 +26,7 @@ import {
 } from "../lib/development/types";
 import { statusLabel, statusTone } from "../lib/development/status";
 
-type DevelopmentEnvironment = AccessEnvironment & { linkedinadam_db: D1Database };
+type DevelopmentEnvironment = AccessEnvironment & GitHubEnvironment & { linkedinadam_db: D1Database };
 
 function environment(context: Route.LoaderArgs["context"] | Route.ActionArgs["context"]) {
   return context.cloudflare.env as unknown as DevelopmentEnvironment;
@@ -68,6 +70,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     filters,
     user,
     github,
+    githubConnection: {
+      connected: Boolean(env.GITHUB_APP_ID && env.GITHUB_APP_INSTALLATION_ID && env.GITHUB_APP_PRIVATE_KEY),
+      repository: `${env.GITHUB_REPOSITORY_OWNER || "colossalbreacker"}/${env.GITHUB_REPOSITORY_NAME || "net-x"}`,
+      scheduled: env.GITHUB_SYNC_ENABLED === "true",
+    },
   };
 }
 
@@ -76,6 +83,12 @@ export async function action({ request, context }: Route.ActionArgs) {
   const user = await requireAuthenticatedUser(request, env);
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
+
+  if (intent === "github_readiness_sync") {
+    const result = await runManualGitHubReadinessSync(env, user);
+    if (result.status === "rejected" || result.status === "skipped" || result.status === "failed") return { error: result.error };
+    return { ok: true, message: `GitHub readiness sync completed: ${result.issues} issues and ${result.pullRequests} pull requests read.` };
+  }
 
   if (intent === "create_request") {
     const id = await createDevelopmentRequest(env.linkedinadam_db, user, {
@@ -134,7 +147,7 @@ function StatusBadge({ value }: { value: string }) {
 export default function Development({ loaderData, actionData }: Route.ComponentProps) {
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
-  const { summary, requests, attention, activity, detail, filters, user, github } = loaderData;
+  const { summary, requests, attention, activity, detail, filters, user, github, githubConnection } = loaderData;
 
   return (
     <main className="development-page">
@@ -173,8 +186,11 @@ export default function Development({ loaderData, actionData }: Route.ComponentP
       </section>
 
       <section className="development-attention panel">
-        <div className="panel-heading"><div><p className="eyebrow">READ-ONLY INTEGRATION</p><h2>{github.lastRun ? "GitHub sync" : "GitHub sync not connected"}</h2></div><span>{github.lastRun?.status || "GitHub connection required"}</span></div>
-        <p>{github.lastRun?.error_message || (github.lastRun?.finished_at ? `Last sync ${github.lastRun.finished_at}.` : "Current Development records and the manual QA workflow remain fully usable. Issue, PR, CI, and branch fields are unavailable until the read-only GitHub App is connected.")}</p>
+        <div className="panel-heading"><div><p className="eyebrow">READ-ONLY INTEGRATION</p><h2>GitHub Sync</h2></div><span>{githubConnection.connected ? "GitHub App connected" : "GitHub connection required"}</span></div>
+        <dl className="detail-overview"><div><dt>Repository</dt><dd>{githubConnection.repository}</dd></div><div><dt>Scheduled Sync</dt><dd>{githubConnection.scheduled ? "On" : "Off"}</dd></div></dl>
+        {(user.role === "OWNER" || user.role === "ADMIN") ? <Form method="post" onSubmit={(event) => { if (!confirm(`Run one read-only GitHub synchronization against ${githubConnection.repository}?\n\nThis reads GitHub and updates DEVOS Development records. It does not modify GitHub.`)) event.preventDefault(); }}><input type="hidden" name="intent" value="github_readiness_sync" /><button disabled={busy || github.lastRun?.status === "running"}>{github.lastRun?.status === "running" ? "GitHub sync already in progress" : "Run GitHub Readiness Sync"}</button></Form> : null}
+        {actionData?.error ? <p className="form-message error" role="alert">{actionData.error}</p> : actionData?.message ? <p className="form-message success" role="status">{actionData.message}</p> : null}
+        {github.lastRun ? <section><h3>Latest Run</h3><dl className="detail-overview"><div><dt>Status</dt><dd>{github.lastRun.status}</dd></div><div><dt>Trigger</dt><dd>{github.lastRun.trigger || "Unknown"}</dd></div><div><dt>Initiator</dt><dd>{github.lastRun.initiator || "System"}</dd></div><div><dt>Started</dt><dd>{github.lastRun.started_at}</dd></div><div><dt>Completed</dt><dd>{github.lastRun.finished_at || "In progress"}</dd></div><div><dt>Duration</dt><dd>{github.lastRun.duration_seconds === null ? "In progress" : `${github.lastRun.duration_seconds}s`}</dd></div><div><dt>Issues</dt><dd>{github.lastRun.issues_seen}</dd></div><div><dt>PRs</dt><dd>{github.lastRun.pull_requests_seen}</dd></div><div><dt>Branches</dt><dd>{github.lastRun.branches_seen}</dd></div><div><dt>Matched</dt><dd>{github.lastRun.matched_count}</dd></div><div><dt>Created</dt><dd>{github.lastRun.created_count}</dd></div><div><dt>Ambiguous</dt><dd>{github.lastRun.ambiguous_count}</dd></div><div><dt>Skipped</dt><dd>{github.lastRun.skipped_count}</dd></div><div><dt>Conflicts</dt><dd>{github.lastRun.conflict_count}</dd></div></dl>{github.lastRun.error_message ? <p className="form-message error" role="alert">{github.lastRun.error_message}</p> : null}</section> : <p>{githubConnection.connected ? "Run one manual readiness sync to initialize GitHub-derived Development data." : "GitHub sync not connected. Current Development records and the manual QA workflow remain fully usable."}</p>}
         <div className="branch-list">{github.branches.length ? github.branches.map(branch => <span key={branch.role}><strong>{branch.role}</strong> {branch.branch_name || branch.status}{branch.sha ? ` · ${branch.sha.slice(0, 8)}` : ""}</span>) : <span>Branch mapping will appear after the first sync.</span>}</div>
       </section>
 

@@ -7,10 +7,17 @@ import {
   type GitHubEnvironment,
   type GitHubIssueSnapshot,
   type GitHubPullRequestSnapshot,
+  type GitHubReadAdapter,
 } from "../integrations/github.server";
 import { insertActivity } from "./repository.server";
 
 type SyncDatabase = D1Database;
+
+export type GitHubSyncOptions = {
+  trigger?: "scheduled" | "manual_readiness";
+  initiator?: string;
+  adapter?: GitHubReadAdapter;
+};
 
 export type BranchMapping = {
   role: "adam" | "joe" | "dev" | "main";
@@ -25,7 +32,7 @@ export function discoverBranchMappings(branches: GitHubBranchSnapshot[]): Branch
   const joeCandidates = names.filter(name => /(^|[\/_-])joe($|[\/_-])/i.test(name) || /^joe/i.test(name));
   return [
     { role: "adam", branchName: exact("adam"), status: exact("adam") ? "MAPPED" : "NOT_FOUND", candidates: exact("adam") ? [exact("adam")!] : [] },
-    { role: "joe", branchName: joeCandidates.length === 1 ? joeCandidates[0] : null, status: joeCandidates.length === 1 ? "MAPPED" : joeCandidates.length > 1 ? "NEEDS_MAPPING" : "NOT_FOUND", candidates: joeCandidates },
+    { role: "joe", branchName: joeCandidates.length === 1 ? joeCandidates[0] : null, status: joeCandidates.length === 1 ? "MAPPED" : "NEEDS_MAPPING", candidates: joeCandidates },
     { role: "dev", branchName: exact("dev"), status: exact("dev") ? "MAPPED" : "NOT_FOUND", candidates: exact("dev") ? [exact("dev")!] : [] },
     { role: "main", branchName: exact("main"), status: exact("main") ? "MAPPED" : "NOT_FOUND", candidates: exact("main") ? [exact("main")!] : [] },
   ];
@@ -118,12 +125,22 @@ async function link(db: SyncDatabase, requestId: string, type: "issue" | "pull_r
   await db.prepare("INSERT OR IGNORE INTO development_links (development_request_id, provider, type, external_id, url, metadata_json) VALUES (?, 'github', ?, ?, ?, ?)").bind(requestId, type, String(number), url, JSON.stringify(payload)).run();
 }
 
-export async function syncNetXRepository(db: SyncDatabase, env: GitHubEnvironment) {
+function safeSyncError(error: unknown) {
+  if (error instanceof Error && /^GitHub (?:API|installation token)/.test(error.message)) return error.message.slice(0, 500);
+  return "GitHub read-only synchronization failed.";
+}
+
+export async function syncNetXRepository(db: SyncDatabase, env: GitHubEnvironment, options: GitHubSyncOptions = {}) {
   const configError = githubConfigurationError(env);
   if (configError) return { status: "skipped" as const, error: configError, issues: 0, pullRequests: 0, created: 0, matched: 0, ambiguous: 0 };
-  const run = await db.prepare("INSERT INTO github_sync_runs (status) VALUES ('running') RETURNING id").first<{ id: number }>();
+  const trigger = options.trigger || "scheduled";
+  const initiator = options.initiator || "system";
+  const run = await db.prepare("INSERT INTO github_sync_runs (status) SELECT 'running' WHERE NOT EXISTS (SELECT 1 FROM github_sync_runs WHERE status = 'running') RETURNING id").first<{ id: number }>();
+  if (!run) return { status: "rejected" as const, error: "GitHub sync already in progress", issues: 0, pullRequests: 0, created: 0, matched: 0, ambiguous: 0 };
+  await db.prepare("INSERT INTO development_activity_events (actor_type, actor_identity, event_type, source, summary, metadata_json) VALUES (?, ?, 'github_sync_started', 'github', ?, ?)")
+    .bind(trigger === "manual_readiness" ? "HUMAN" : "SYSTEM", initiator, `GitHub ${trigger === "manual_readiness" ? "readiness " : ""}sync started.`, JSON.stringify({ syncRunId: run.id, trigger })).run();
   try {
-    const adapter = createGitHubReadAdapter(env); const [issues, pullRequests, branches] = await Promise.all([adapter.listIssues(), adapter.listPullRequests(), adapter.listBranches()]);
+    const adapter = options.adapter || createGitHubReadAdapter(env); const [issues, pullRequests, branches] = await Promise.all([adapter.listIssues(), adapter.listPullRequests(), adapter.listBranches()]);
     let created = 0; let matched = 0; let ambiguous = 0;
     for (const issue of issues) {
       const reconciledId = await reconcileExistingRequest(db, "issue", issue.number, issue.htmlUrl);
@@ -157,10 +174,14 @@ export async function syncNetXRepository(db: SyncDatabase, env: GitHubEnvironmen
       }
     }
     await db.prepare("UPDATE github_sync_runs SET status = 'succeeded', issues_seen = ?, pull_requests_seen = ?, created_count = ?, matched_count = ?, ambiguous_count = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?").bind(issues.length, pullRequests.length, created, matched, ambiguous, run?.id || 0).run();
-    return { status: "succeeded" as const, issues: issues.length, pullRequests: pullRequests.length, created, matched, ambiguous };
+    await db.prepare("INSERT INTO development_activity_events (actor_type, actor_identity, event_type, source, summary, metadata_json) VALUES (?, ?, 'github_sync_completed', 'github', ?, ?)")
+      .bind(trigger === "manual_readiness" ? "HUMAN" : "SYSTEM", initiator, `GitHub ${trigger === "manual_readiness" ? "readiness " : ""}sync completed.`, JSON.stringify({ syncRunId: run.id, trigger })).run();
+    return { status: "succeeded" as const, runId: run.id, issues: issues.length, pullRequests: pullRequests.length, branches: branches.length, created, matched, ambiguous, skipped: 0, conflicts: 0 };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown GitHub sync error.";
+    const message = safeSyncError(error);
     await db.prepare("UPDATE github_sync_runs SET status = 'failed', error_message = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?").bind(message, run?.id || 0).run();
-    return { status: "failed" as const, error: message, issues: 0, pullRequests: 0, created: 0, matched: 0, ambiguous: 0 };
+    await db.prepare("INSERT INTO development_activity_events (actor_type, actor_identity, event_type, source, summary, metadata_json) VALUES (?, ?, 'github_sync_failed', 'github', ?, ?)")
+      .bind(trigger === "manual_readiness" ? "HUMAN" : "SYSTEM", initiator, `GitHub ${trigger === "manual_readiness" ? "readiness " : ""}sync failed.`, JSON.stringify({ syncRunId: run.id, trigger })).run();
+    return { status: "failed" as const, runId: run.id, error: message, issues: 0, pullRequests: 0, branches: 0, created: 0, matched: 0, ambiguous: 0, skipped: 0, conflicts: 0 };
   }
 }
