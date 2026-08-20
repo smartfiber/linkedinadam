@@ -4,6 +4,7 @@ import type {
   DevelopmentFilters,
   DevelopmentRequest,
   DevelopmentSummary,
+  DevelopmentGitHubItem,
   QaHandoff,
   GitHubSyncStatus,
 } from "./types";
@@ -15,9 +16,13 @@ function queryParts(filters: DevelopmentFilters) {
   const bindings: string[] = [];
 
   if (filters.search) {
-    where.push("(r.title LIKE ? OR r.external_key LIKE ? OR r.problem LIKE ?)");
+    where.push(`(r.title LIKE ? OR r.external_key LIKE ? OR r.problem LIKE ?
+      OR r.product_area LIKE ?
+      OR EXISTS (SELECT 1 FROM github_sync_items search_item
+        WHERE search_item.development_request_id = r.id
+          AND (CAST(search_item.number AS TEXT) LIKE ? OR search_item.title LIKE ?)))`);
     const search = `%${filters.search}%`;
-    bindings.push(search, search, search);
+    bindings.push(search, search, search, search, search, search);
   }
   if (filters.priority) {
     where.push("r.priority = ?");
@@ -27,25 +32,54 @@ function queryParts(filters: DevelopmentFilters) {
     where.push("r.owner_email = ?");
     bindings.push(filters.owner);
   }
+  if (filters.qaPartner) {
+    where.push("r.qa_partner_email = ?");
+    bindings.push(filters.qaPartner);
+  }
+  if (filters.type) {
+    where.push("r.type = ?");
+    bindings.push(filters.type);
+  }
+  if (filters.area) {
+    where.push("r.product_area = ?");
+    bindings.push(filters.area);
+  }
   if (filters.status) {
     where.push("r.overall_status = ?");
     bindings.push(filters.status);
   }
   if (filters.attention === "ci_failing") {
-    where.push("EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure', 'cancelled', 'timed_out', 'action_required'))");
+    where.push(
+      "EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure', 'cancelled', 'timed_out', 'action_required'))",
+    );
   }
   if (filters.attention === "unknown_sync") {
-    where.push("EXISTS (SELECT 1 FROM development_branch_states s WHERE s.development_request_id = r.id AND s.state = 'unknown')");
+    where.push(
+      "EXISTS (SELECT 1 FROM development_branch_states s WHERE s.development_request_id = r.id AND s.state = 'unknown')",
+    );
   }
-  const viewClauses: Partial<Record<NonNullable<DevelopmentFilters["view"]>, string>> = {
-    needs_adam: "r.overall_status = 'awaiting_adam'", needs_joe: "r.overall_status = 'awaiting_joe'",
-    urgent: "r.priority IN ('P0','P1') AND r.overall_status NOT IN ('verified','closed')",
-    awaiting_approval: "r.overall_status = 'awaiting_mutual_approval'", ready_dev: "r.overall_status = 'ready_for_dev'",
-    on_dev: "r.overall_status = 'on_dev'", ready_main: "r.overall_status = 'ready_for_main'",
-    main_verify: "r.overall_status = 'on_main_needs_verification'", blocked: "r.overall_status = 'blocked'",
-    sync_unknown: "EXISTS (SELECT 1 FROM development_branch_states s WHERE s.development_request_id = r.id AND s.state = 'unknown')",
+  const viewClauses: Partial<
+    Record<NonNullable<DevelopmentFilters["view"]>, string>
+  > = {
+    all_active: "r.overall_status NOT IN ('verified','closed')",
+    needs_adam: "r.overall_status = 'awaiting_adam'",
+    needs_joe: "r.overall_status = 'awaiting_joe'",
+    urgent:
+      "r.priority IN ('P0','P1') AND r.overall_status NOT IN ('verified','closed')",
+    awaiting_approval: "r.overall_status = 'awaiting_mutual_approval'",
+    ready_dev: "r.overall_status = 'ready_for_dev'",
+    on_dev: "r.overall_status = 'on_dev'",
+    ready_main: "r.overall_status = 'ready_for_main'",
+    main_verify: "r.overall_status = 'on_main_needs_verification'",
+    blocked: "r.overall_status = 'blocked'",
+    ci_failing:
+      "EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure', 'cancelled', 'timed_out', 'action_required'))",
+    sync_unknown:
+      "EXISTS (SELECT 1 FROM development_branch_states s WHERE s.development_request_id = r.id AND s.state = 'unknown')",
+    verified: "r.overall_status = 'verified'",
   };
-  if (filters.view && viewClauses[filters.view]) where.push(viewClauses[filters.view]!);
+  if (filters.view && viewClauses[filters.view])
+    where.push(viewClauses[filters.view]!);
 
   return {
     clause: where.length ? `WHERE ${where.join(" AND ")}` : "",
@@ -59,7 +93,8 @@ export async function listDevelopmentRequests(
 ) {
   const query = queryParts(filters);
   return db
-    .prepare(`
+    .prepare(
+      `
       SELECT
         r.*,
         issue.url AS issue_url,
@@ -89,10 +124,13 @@ export async function listDevelopmentRequests(
         COALESCE(main_branch.state, 'unknown') AS main_state,
         CASE
           WHEN r.overall_status = 'blocked' THEN 'Resolve blocker'
-          WHEN r.overall_status = 'awaiting_adam' THEN 'Adam QA / approval'
-          WHEN r.overall_status = 'awaiting_joe' THEN 'Joe QA / approval'
+          WHEN EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure','cancelled','timed_out','action_required')) THEN 'Fix failing CI'
+          WHEN r.overall_status = 'awaiting_adam' THEN 'Adam: QA required'
+          WHEN r.overall_status = 'awaiting_joe' THEN 'Joe: QA required'
           WHEN r.overall_status = 'awaiting_mutual_approval' THEN 'Mutual approval'
-          WHEN r.overall_status = 'on_main_needs_verification' THEN 'Verify on Main'
+          WHEN r.overall_status = 'ready_for_dev' THEN 'Ready for Dev'
+          WHEN r.overall_status = 'ready_for_main' THEN 'Ready for Main'
+          WHEN r.overall_status = 'on_main_needs_verification' THEN 'Verify production'
           ELSE COALESCE(r.next_action, 'Review status')
         END AS next_action
       FROM development_requests r
@@ -116,14 +154,16 @@ export async function listDevelopmentRequests(
         ON main_branch.development_request_id = r.id AND main_branch.branch = 'main'
       ${query.clause}
       ORDER BY ${filters.sort === "updated" ? "r.updated_at DESC" : filters.sort === "next_action" ? "next_action ASC, r.updated_at DESC" : "CASE r.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, r.updated_at DESC"}
-    `)
+    `,
+    )
     .bind(...query.bindings)
     .all<DevelopmentRequest>();
 }
 
 export async function getDevelopmentSummary(db: DevelopmentDatabase) {
   const result = await db
-    .prepare(`
+    .prepare(
+      `
       SELECT
         SUM(CASE WHEN priority = 'P0' AND overall_status NOT IN ('verified', 'closed') THEN 1 ELSE 0 END) AS p0Open,
         SUM(CASE WHEN priority = 'P1' AND overall_status NOT IN ('verified', 'closed') THEN 1 ELSE 0 END) AS p1Open,
@@ -139,7 +179,8 @@ export async function getDevelopmentSummary(db: DevelopmentDatabase) {
         SUM(CASE WHEN EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = development_requests.id AND json_extract(c.value, '$.conclusion') IN ('failure','cancelled','timed_out','action_required')) THEN 1 ELSE 0 END) AS ciFailing,
         SUM(CASE WHEN EXISTS (SELECT 1 FROM development_branch_states s WHERE s.development_request_id = development_requests.id AND s.state = 'unknown') THEN 1 ELSE 0 END) AS unknownSync
       FROM development_requests
-    `)
+    `,
+    )
     .first<DevelopmentSummary>();
 
   return {
@@ -159,25 +200,69 @@ export async function getDevelopmentSummary(db: DevelopmentDatabase) {
   } satisfies DevelopmentSummary;
 }
 
-export async function getDevelopmentRequest(db: DevelopmentDatabase, id: string) {
+export async function getDevelopmentRequest(
+  db: DevelopmentDatabase,
+  id: string,
+) {
   const request = await db
-    .prepare("SELECT * FROM development_requests WHERE id = ?")
+    .prepare(
+      `SELECT r.*,
+      CASE
+        WHEN r.overall_status = 'blocked' THEN 'Resolve blocker'
+        WHEN EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure','cancelled','timed_out','action_required')) THEN 'Fix failing CI'
+        WHEN r.overall_status = 'awaiting_adam' THEN 'Adam: QA required'
+        WHEN r.overall_status = 'awaiting_joe' THEN 'Joe: QA required'
+        WHEN r.overall_status = 'awaiting_mutual_approval' THEN 'Mutual approval'
+        WHEN r.overall_status = 'ready_for_dev' THEN 'Ready for Dev'
+        WHEN r.overall_status = 'ready_for_main' THEN 'Ready for Main'
+        WHEN r.overall_status = 'on_main_needs_verification' THEN 'Verify production'
+        ELSE COALESCE(r.next_action, 'Review status')
+      END AS next_action
+      FROM development_requests r WHERE r.id = ?`,
+    )
     .bind(id)
     .first<DevelopmentRequest>();
   if (!request) return null;
 
-  const [links, branches, qa, approvals, activity] = await Promise.all([
-    db.prepare("SELECT * FROM development_links WHERE development_request_id = ? ORDER BY created_at")
-      .bind(id).all(),
-    db.prepare("SELECT * FROM development_branch_states WHERE development_request_id = ? ORDER BY branch")
-      .bind(id).all(),
-    db.prepare("SELECT * FROM qa_handoffs WHERE development_request_id = ? ORDER BY id")
-      .bind(id).all<QaHandoff>(),
-    db.prepare("SELECT * FROM development_approvals WHERE development_request_id = ? ORDER BY created_at DESC")
-      .bind(id).all<DevelopmentApproval>(),
-    db.prepare("SELECT * FROM development_activity_events WHERE development_request_id = ? ORDER BY occurred_at DESC")
-      .bind(id).all<ActivityEvent>(),
-  ]);
+  const [links, branches, qa, approvals, activity, githubItems] =
+    await Promise.all([
+      db
+        .prepare(
+          "SELECT * FROM development_links WHERE development_request_id = ? ORDER BY created_at",
+        )
+        .bind(id)
+        .all(),
+      db
+        .prepare(
+          "SELECT * FROM development_branch_states WHERE development_request_id = ? ORDER BY branch",
+        )
+        .bind(id)
+        .all(),
+      db
+        .prepare(
+          "SELECT * FROM qa_handoffs WHERE development_request_id = ? ORDER BY id",
+        )
+        .bind(id)
+        .all<QaHandoff>(),
+      db
+        .prepare(
+          "SELECT * FROM development_approvals WHERE development_request_id = ? ORDER BY created_at DESC",
+        )
+        .bind(id)
+        .all<DevelopmentApproval>(),
+      db
+        .prepare(
+          "SELECT * FROM development_activity_events WHERE development_request_id = ? ORDER BY occurred_at DESC",
+        )
+        .bind(id)
+        .all<ActivityEvent>(),
+      db
+        .prepare(
+          "SELECT id, kind, number, title, state, payload_json, github_updated_at FROM github_sync_items WHERE development_request_id = ? ORDER BY github_updated_at DESC, id DESC",
+        )
+        .bind(id)
+        .all<DevelopmentGitHubItem>(),
+    ]);
 
   return {
     request,
@@ -186,12 +271,17 @@ export async function getDevelopmentRequest(db: DevelopmentDatabase, id: string)
     qa: qa.results || [],
     approvals: approvals.results || [],
     activity: activity.results || [],
+    githubItems: githubItems.results || [],
   };
 }
 
-export async function listNeedsAttention(db: DevelopmentDatabase, email: string) {
+export async function listNeedsAttention(
+  db: DevelopmentDatabase,
+  email: string,
+) {
   return db
-    .prepare(`
+    .prepare(
+      `
       SELECT id, title, priority, overall_status, next_action, updated_at
       FROM development_requests
       WHERE (owner_email = ? AND overall_status = 'blocked')
@@ -199,21 +289,38 @@ export async function listNeedsAttention(db: DevelopmentDatabase, email: string)
          OR (owner_email = ? AND overall_status IN ('awaiting_mutual_approval', 'on_main_needs_verification'))
       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, updated_at DESC
       LIMIT 25
-    `)
+    `,
+    )
     .bind(email, email, email)
-    .all<Pick<DevelopmentRequest, "id" | "title" | "priority" | "overall_status" | "next_action" | "updated_at">>();
+    .all<
+      Pick<
+        DevelopmentRequest,
+        | "id"
+        | "title"
+        | "priority"
+        | "overall_status"
+        | "next_action"
+        | "updated_at"
+      >
+    >();
 }
 
 export async function listActivity(db: DevelopmentDatabase, limit = 40) {
   return db
-    .prepare("SELECT * FROM development_activity_events ORDER BY occurred_at DESC LIMIT ?")
+    .prepare(
+      "SELECT * FROM development_activity_events ORDER BY occurred_at DESC LIMIT ?",
+    )
     .bind(limit)
     .all<ActivityEvent>();
 }
 
-export async function getGitHubSyncStatus(db: DevelopmentDatabase): Promise<GitHubSyncStatus> {
+export async function getGitHubSyncStatus(
+  db: DevelopmentDatabase,
+): Promise<GitHubSyncStatus> {
   const [lastRun, branches] = await Promise.all([
-    db.prepare(`SELECT r.id, r.status, r.started_at, r.finished_at,
+    db
+      .prepare(
+        `SELECT r.id, r.status, r.started_at, r.finished_at,
       CASE WHEN r.finished_at IS NULL THEN NULL ELSE CAST((julianday(r.finished_at) - julianday(r.started_at)) * 86400 AS INTEGER) END AS duration_seconds,
       r.issues_seen, r.pull_requests_seen, r.created_count, r.matched_count, r.ambiguous_count,
       (SELECT COUNT(*) FROM github_branch_mappings) AS branches_seen,
@@ -221,8 +328,14 @@ export async function getGitHubSyncStatus(db: DevelopmentDatabase): Promise<GitH
       r.error_message,
       (SELECT json_extract(e.metadata_json, '$.trigger') FROM development_activity_events e WHERE e.event_type = 'github_sync_started' AND json_extract(e.metadata_json, '$.syncRunId') = r.id ORDER BY e.id DESC LIMIT 1) AS trigger,
       (SELECT e.actor_identity FROM development_activity_events e WHERE e.event_type = 'github_sync_started' AND json_extract(e.metadata_json, '$.syncRunId') = r.id ORDER BY e.id DESC LIMIT 1) AS initiator
-      FROM github_sync_runs r ORDER BY r.id DESC LIMIT 1`).first<GitHubSyncStatus["lastRun"]>(),
-    db.prepare("SELECT role, branch_name, status, sha FROM github_branch_mappings ORDER BY CASE role WHEN 'adam' THEN 0 WHEN 'joe' THEN 1 WHEN 'dev' THEN 2 ELSE 3 END").all<GitHubSyncStatus["branches"][number]>(),
+      FROM github_sync_runs r ORDER BY r.id DESC LIMIT 1`,
+      )
+      .first<GitHubSyncStatus["lastRun"]>(),
+    db
+      .prepare(
+        "SELECT role, branch_name, status, sha FROM github_branch_mappings ORDER BY CASE role WHEN 'adam' THEN 0 WHEN 'joe' THEN 1 WHEN 'dev' THEN 2 ELSE 3 END",
+      )
+      .all<GitHubSyncStatus["branches"][number]>(),
   ]);
   return { lastRun: lastRun || null, branches: branches.results || [] };
 }
@@ -246,18 +359,32 @@ export function insertDevelopmentRequest(
     nextAction?: string | null;
   },
 ) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     INSERT INTO development_requests (
       id, title, problem, why_decision, priority, type, product_area,
       requested_by_type, requested_by_name, owner_email, qa_partner_email,
       overall_status, notes, next_action
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(
-    input.id, input.title, input.problem || null, input.whyDecision || null,
-    input.priority, input.type, input.productArea || null, input.requestedByType,
-    input.requestedByName, input.ownerEmail || null, input.qaPartnerEmail || null,
-    input.overallStatus || "open", input.notes || null, input.nextAction || null,
-  );
+  `,
+    )
+    .bind(
+      input.id,
+      input.title,
+      input.problem || null,
+      input.whyDecision || null,
+      input.priority,
+      input.type,
+      input.productArea || null,
+      input.requestedByType,
+      input.requestedByName,
+      input.ownerEmail || null,
+      input.qaPartnerEmail || null,
+      input.overallStatus || "open",
+      input.notes || null,
+      input.nextAction || null,
+    );
 }
 
 export function insertActivity(
@@ -272,14 +399,22 @@ export function insertActivity(
     metadata?: Record<string, unknown>;
   },
 ) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     INSERT INTO development_activity_events (
       actor_type, actor_identity, event_type, development_request_id,
       source, summary, metadata_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).bind(
-    input.actorType, input.actorIdentity, input.eventType, input.requestId || null,
-    input.source || "backoffice", input.summary,
-    input.metadata ? JSON.stringify(input.metadata) : null,
-  );
+  `,
+    )
+    .bind(
+      input.actorType,
+      input.actorIdentity,
+      input.eventType,
+      input.requestId || null,
+      input.source || "backoffice",
+      input.summary,
+      input.metadata ? JSON.stringify(input.metadata) : null,
+    );
 }

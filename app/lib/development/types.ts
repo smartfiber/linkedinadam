@@ -102,10 +102,27 @@ export type DevelopmentSummary = {
 export type DevelopmentFilters = {
   search?: string;
   priority?: DevelopmentPriority | "";
+  type?: DevelopmentType | "";
+  area?: string;
   owner?: string;
+  qaPartner?: string;
   status?: DevelopmentStatus | "";
   attention?: "ci_failing" | "unknown_sync" | "";
-  view?: "needs_adam" | "needs_joe" | "urgent" | "awaiting_approval" | "ready_dev" | "on_dev" | "ready_main" | "main_verify" | "blocked" | "sync_unknown" | "";
+  view?:
+    | "all_active"
+    | "needs_adam"
+    | "needs_joe"
+    | "urgent"
+    | "awaiting_approval"
+    | "ready_dev"
+    | "on_dev"
+    | "ready_main"
+    | "main_verify"
+    | "blocked"
+    | "ci_failing"
+    | "sync_unknown"
+    | "verified"
+    | "";
   sort?: "updated" | "priority" | "next_action";
 };
 
@@ -149,7 +166,20 @@ export type DevelopmentApproval = {
   created_at: string;
 };
 
-export type DevelopmentActor = Pick<AuthenticatedUser, "email" | "displayName" | "subject" | "role">;
+export type DevelopmentGitHubItem = {
+  id: number;
+  kind: "issue" | "pull_request";
+  number: number;
+  title: string;
+  state: string;
+  payload_json: string;
+  github_updated_at: string | null;
+};
+
+export type DevelopmentActor = Pick<
+  AuthenticatedUser,
+  "email" | "displayName" | "subject" | "role"
+>;
 
 export type GitHubSyncStatus = {
   lastRun: {
@@ -170,5 +200,10 @@ export type GitHubSyncStatus = {
     conflict_count: number;
     error_message: string | null;
   } | null;
-  branches: { role: string; branch_name: string | null; status: string; sha: string | null }[];
+  branches: {
+    role: string;
+    branch_name: string | null;
+    status: string;
+    sha: string | null;
+  }[];
 };

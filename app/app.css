@@ -1094,6 +1094,107 @@ button.secondary {
   }
 }
 
+/* DEVOS Development workspace density and request drawer */
+.development-page { padding: 24px clamp(14px, 2.5vw, 34px); }
+.development-header { margin-bottom: 14px; }
+.development-header h1 { margin: 2px 0 3px; font-size: clamp(26px, 3vw, 34px); }
+.development-header-actions { align-items: center; }
+.github-status-chip { display: inline-flex; align-items: center; gap: 6px; padding: 7px 9px; border: 1px solid #d8e0eb; border-radius: 999px; color: #526079; background: #fff; font-size: 11px; font-weight: 800; }
+.github-status-chip.connected { color: #147447; background: #edfaf3; }
+.github-status-chip.error { color: #a93239; background: #fff0f0; }
+.summary-link { color: inherit; text-decoration: none; }
+.summary-link:focus-visible { outline: 3px solid #1675e7; outline-offset: 2px; border-radius: 7px; }
+.development-summary-grid { grid-template-columns: repeat(8, minmax(100px, 1fr)); gap: 6px; margin-bottom: 12px; }
+.development-summary-card { min-height: 54px; padding: 9px 11px; border-radius: 7px; box-shadow: none; }
+.development-summary-card span { min-height: 0; font-size: 9px; }
+.development-summary-card strong { margin-top: 3px; font-size: 18px; }
+.development-page .panel { margin-bottom: 12px; padding: 14px; border-radius: 8px; box-shadow: none; }
+.github-sync-details > summary,
+.new-request-panel > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; list-style: none; }
+.github-sync-details > summary::-webkit-details-marker,
+.new-request-panel > summary::-webkit-details-marker { display: none; }
+.github-sync-details:not([open]) { padding-block: 9px; }
+.github-sync-details:not([open]) .panel-heading { margin: 0; }
+.github-sync-summary { color: #69758c; font-size: 11px; }
+.development-toolbar { position: sticky; top: 8px; z-index: 20; padding: 9px !important; }
+.development-filters { display: flex; align-items: end; gap: 7px; overflow-x: auto; }
+.development-filters label { display: grid; flex: 0 0 116px; gap: 3px; color: #69758c; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.development-filters .development-search { flex-basis: 220px; }
+.development-filters input,
+.development-filters select { min-height: 34px; padding: 7px 8px; border-radius: 6px; font-size: 11px; }
+.development-filters button,
+.filter-clear { min-height: 34px; box-sizing: border-box; }
+.filter-clear { display: inline-flex; align-items: center; color: #526079; font-size: 11px; font-weight: 800; }
+.development-table-panel { padding: 0 !important; overflow: hidden; }
+.development-table-panel .panel-heading { margin: 0; padding: 12px 14px; }
+.development-table { min-width: 1420px; }
+.development-table th { position: sticky; top: 0; z-index: 2; padding: 8px; background: #f8fafc; }
+.development-table td { padding: 8px; vertical-align: middle; }
+.development-table th:first-child,
+.development-table td:first-child { position: sticky; left: 0; z-index: 3; background: #fff; box-shadow: 1px 0 #edf0f4; }
+.development-table th:first-child { z-index: 4; background: #f8fafc; }
+.github-link-stack { display: grid; gap: 3px; }
+.github-link-stack a { color: #176c4a; font-weight: 800; text-decoration: none; }
+.github-link-stack span { color: #7b8799; font-size: 10px; }
+.next-action-cell { border-left: 2px solid #cddced; color: #152d50 !important; }
+.new-request-panel { scroll-margin-top: 80px; }
+.new-request-panel > summary span:first-child { display: grid; gap: 2px; }
+.new-request-panel > summary small { color: #69758c; font-weight: 500; }
+.new-request-panel[open] > summary { margin-bottom: 16px; }
+.development-detail { position: fixed; inset: 0 0 0 auto; z-index: 100; width: min(760px, calc(100vw - 84px)); overflow-y: auto; border-left: 1px solid #d8e0eb; background: #fff; box-shadow: -18px 0 44px rgba(19, 32, 54, .18); }
+.request-detail-header { position: sticky; top: 0; z-index: 4; display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 18px 20px 14px; border-bottom: 1px solid #e6ebf2; background: #fff; }
+.request-detail-header h2 { margin: 2px 0 8px; font-size: 22px; }
+.request-detail-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; color: #526079; font-size: 11px; }
+.request-next-action { display: block; margin-top: 10px; color: #153d70; font-size: 13px; }
+.request-detail-actions { display: flex; align-items: center; gap: 8px; }
+.icon-link { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid #d8e0eb; border-radius: 6px; color: #344057; font-size: 20px; text-decoration: none; }
+.request-detail-tabs { position: sticky; top: 118px; z-index: 3; display: flex; gap: 18px; padding: 0 20px; border-bottom: 1px solid #dfe5ed; background: #fff; }
+.request-detail-tabs a { padding: 11px 1px 9px; border-bottom: 2px solid transparent; color: #69758c; font-size: 12px; font-weight: 800; text-decoration: none; }
+.request-detail-tabs a[aria-current="page"] { border-color: #176c4a; color: #176c4a; }
+.request-detail-body { padding: 4px 20px 28px; }
+.request-edit-panel { margin-top: 18px; padding: 12px; border: 1px solid #dfe5ed; border-radius: 7px; }
+.request-edit-panel > summary { cursor: pointer; color: #176c4a; font-size: 12px; font-weight: 800; }
+.request-edit-panel[open] > summary { margin-bottom: 14px; }
+.qa-stage-flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; margin-bottom: 16px; }
+.qa-stage { display: grid; align-content: start; gap: 6px; min-height: 86px; padding: 9px; border: 1px solid #e1e6ee; border-radius: 7px; background: #fafbfd; }
+.qa-stage > strong { font-size: 9px; color: #526079; }
+.qa-stage small { color: #69758c; font-size: 9px; line-height: 1.35; }
+.branch-state-matrix { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.branch-state-matrix article { display: grid; gap: 7px; padding: 11px; border: 1px solid #e1e6ee; border-radius: 7px; background: #fafbfd; }
+.branch-state-matrix code { font-size: 10px; }
+.branch-state-matrix small,
+.github-detail-links small { color: #69758c; font-size: 10px; }
+.github-detail-links { display: grid; gap: 8px; padding: 0; list-style: none; }
+.github-detail-links li { display: flex; justify-content: space-between; gap: 12px; }
+.github-record-card { display: grid; gap: 12px; padding: 12px; border: 1px solid #e1e6ee; border-radius: 7px; background: #fafbfd; }
+.github-record-card > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.github-record-card dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; margin: 0; }
+.github-record-card dl div { min-width: 0; }
+.github-record-card dt { color: #69758c; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.github-record-card dd { margin: 3px 0 0; overflow-wrap: anywhere; color: #344057; font-size: 11px; }
+.github-record-card > a { width: max-content; color: #176c4a; font-size: 11px; font-weight: 800; }
+
+@media (max-width: 1100px) {
+  .development-summary-grid { grid-template-columns: repeat(4, 1fr); }
+  .development-detail { width: min(720px, calc(100vw - 64px)); }
+}
+
+@media (max-width: 700px) {
+  .development-header { display: grid; gap: 12px; }
+  .development-summary-grid { grid-template-columns: repeat(2, 1fr); }
+  .development-attention { display: none; }
+  .development-table { min-width: 680px; }
+  .development-table th:nth-child(n+3):not(:nth-child(12)),
+  .development-table td:nth-child(n+3):not(:nth-child(12)) { display: none; }
+  .development-detail { width: 100vw; }
+  .request-detail-header { position: static; display: grid; }
+  .request-detail-tabs { top: 0; overflow-x: auto; }
+  .request-detail-actions { order: -1; justify-content: space-between; }
+  .qa-stage-flow,
+  .branch-state-matrix { grid-template-columns: 1fr 1fr; }
+  .github-record-card dl { grid-template-columns: 1fr; }
+}
+
 /* Connection growth workspace */
 .connections-page {
   min-height: 100vh;
