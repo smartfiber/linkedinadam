@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import { importPKCS8, importSPKI, jwtVerify, SignJWT } from "jose";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_NET_X_REPOSITORY, githubConfigurationError, normalizeGitHubAppPrivateKey, repositoryFromEnvironment } from "../app/lib/integrations/github.server";
+import { boundedPullRequests, DEFAULT_NET_X_REPOSITORY, githubConfigurationError, mapWithConcurrency, MAX_SYNC_PULL_REQUESTS, normalizeGitHubAppPrivateKey, repositoryFromEnvironment } from "../app/lib/integrations/github.server";
 import { checkState, computeBranchState, discoverBranchMappings, issueNumbersFromText, nextActionForPullRequest, patchEquivalence } from "../app/lib/development/sync.server";
 import { supportedGitHubWebhookEvent, verifyGitHubWebhookSignature } from "../app/lib/integrations/github-webhook.server";
 
@@ -64,6 +64,24 @@ describe("read-only GitHub sync helpers", () => {
     const pr = { id: 1, number: 7, title: "Work", body: null, state: "open", draft: false, sourceBranch: "feature", targetBranch: "dev", headSha: "work", mergeSha: null, merged: false, mergeable: true, author: "adam", reviewers: [], approvals: 0, changedFiles: [file("a.ts", "@@ -1 +1 @@\n-old\n+new")], checks: [], htmlUrl: "", createdAt: "", updatedAt: "", mergedAt: null } as const;
     const present = await computeBranchState(pr, { name: "dev", sha: "tip" }, async () => ({ status: "ahead", aheadBy: 2, behindBy: 0, files: [] }));
     expect(present).toMatchObject({ state: "present", relationship: "EXACT", confidence: "HIGH" });
+  });
+
+  it("bounds GitHub PR enrichment concurrency and preserves ordering", async () => {
+    let active = 0; let maximum = 0;
+    const values = await mapWithConcurrency(Array.from({ length: 40 }, (_, index) => index), 8, async value => {
+      active += 1; maximum = Math.max(maximum, active);
+      await new Promise(resolve => setTimeout(resolve, value % 3));
+      active -= 1;
+      return value * 2;
+    });
+    expect(maximum).toBeLessThanOrEqual(8);
+    expect(values).toEqual(Array.from({ length: 40 }, (_, index) => index * 2));
+  });
+
+  it("bounds readiness synchronization to the 50 most recent pull requests", () => {
+    const values = Array.from({ length: 75 }, (_, index) => index);
+    expect(MAX_SYNC_PULL_REQUESTS).toBe(50);
+    expect(boundedPullRequests(values)).toEqual(values.slice(0, 50));
   });
 
   it("verifies webhook HMAC signatures and rejects unsupported events", async () => {
