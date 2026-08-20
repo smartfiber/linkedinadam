@@ -1,8 +1,8 @@
-# Welcome to React Router + Cloudflare Workers!
+# Net-X Dev OS (DEVOS)
 
 For the current internal operating-system foundation, see
 [`docs/net-x-back-office.md`](docs/net-x-back-office.md). The repository and
-Worker retain their existing LinkedInAdam names during this migration.
+Worker retain their legacy `LinkedinAdam` identifiers for infrastructure compatibility.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/templates/tree/main/react-router-starter-template)
 

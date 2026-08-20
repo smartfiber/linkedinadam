@@ -151,7 +151,7 @@ export function buildContentInsights(posts: MeasuredPost[]) {
 
   if (!insights.length) {
     insights.push(
-      "More data is needed. At least three measured posts per segment are required before LinkedInAdam presents a comparative content insight.",
+      "More data is needed. At least three measured posts per segment are required before DEVOS presents a comparative content insight.",
     );
   }
 

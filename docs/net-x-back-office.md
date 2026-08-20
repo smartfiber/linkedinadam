@@ -1,8 +1,16 @@
-# Net-X Back Office foundation
+# Net-X Dev OS (DEVOS)
 
-LinkedInAdam remains the existing Worker and repository. This foundation adds
-the first internal Development Control Center without changing the existing
-LinkedIn publishing or content workflows.
+Net-X Dev OS is the user-facing internal operating system for Development,
+Content & LinkedIn, and approval-controlled agents. Existing LinkedIn
+publishing and content workflows remain unchanged.
+
+## Legacy infrastructure identifiers
+
+The GitHub repository remains `SmartFiber/LinkedinAdam`, the Cloudflare Worker
+remains `linkedinadam`, the D1 database remains `linkedinadam-db`, and its D1
+binding remains `linkedinadam_db`. OAuth callback URLs, table names, migration
+history, and environment/secret names are also preserved. These identifiers
+are compatibility contracts, not user-facing product branding.
 
 ## Cloudflare Access
 
@@ -192,6 +200,26 @@ publishing credentials, and generated-image storage remain server-side.
   provider. No email provider or sending path exists in this phase.
 - **Newsletters** will reuse drafting, review, approval, and scheduling concepts,
   then add recipient models later.
-- **Agents** may eventually operate across Development, Content & LinkedIn,
-  People, Outreach, and Newsletters. Existing orchestration/autopilot remains
-  the only executable automation in this phase.
+- **Agents** now share the DEVOS control plane across Development and existing
+  Content & LinkedIn automation. People, Outreach, and Newsletters remain
+  future attachment points.
+
+## Agent control plane
+
+Migration `0017_add_devos_agent_control_plane.sql` adds the normalized agent
+registry, tools, audited runs, append-only run events, approvals, and disabled-
+by-default schedules. `DevosAgentRuntime` provides per-agent Durable Object
+identity and state while D1 remains the queryable control-plane ledger.
+
+Existing Strategy, Content Planner, Post Drafting, Image Generation,
+Connection Targeting, Engagement Queue, Conversation Signal, Lead Routing,
+Post Orchestration, and Daily Operations Autopilot capabilities are registered
+as wrappers around their existing routes and services. They are not duplicated.
+Only deterministic READ/ANALYZE/DRAFT Development controls run through the new
+runtime. Code execution, repository writes, PR actions, deployments, external
+email, and automatic LinkedIn publishing are unavailable.
+
+The model-provider registry anticipates OpenAI, Anthropic, Gemini, and Workers
+AI authentication modes. Only the existing server-only OpenAI integration is
+marked active; it is reused directly by existing content services rather than
+instantiating a parallel client.
