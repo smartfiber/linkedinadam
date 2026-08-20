@@ -4,6 +4,7 @@ import type {
   DevelopmentFilters,
   DevelopmentRequest,
   DevelopmentSummary,
+  DevelopmentGitHubItem,
   QaHandoff,
   GitHubSyncStatus,
 } from "./types";
@@ -123,10 +124,13 @@ export async function listDevelopmentRequests(
         COALESCE(main_branch.state, 'unknown') AS main_state,
         CASE
           WHEN r.overall_status = 'blocked' THEN 'Resolve blocker'
-          WHEN r.overall_status = 'awaiting_adam' THEN 'Adam QA / approval'
-          WHEN r.overall_status = 'awaiting_joe' THEN 'Joe QA / approval'
+          WHEN EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure','cancelled','timed_out','action_required')) THEN 'Fix failing CI'
+          WHEN r.overall_status = 'awaiting_adam' THEN 'Adam: QA required'
+          WHEN r.overall_status = 'awaiting_joe' THEN 'Joe: QA required'
           WHEN r.overall_status = 'awaiting_mutual_approval' THEN 'Mutual approval'
-          WHEN r.overall_status = 'on_main_needs_verification' THEN 'Verify on Main'
+          WHEN r.overall_status = 'ready_for_dev' THEN 'Ready for Dev'
+          WHEN r.overall_status = 'ready_for_main' THEN 'Ready for Main'
+          WHEN r.overall_status = 'on_main_needs_verification' THEN 'Verify production'
           ELSE COALESCE(r.next_action, 'Review status')
         END AS next_action
       FROM development_requests r
@@ -201,43 +205,64 @@ export async function getDevelopmentRequest(
   id: string,
 ) {
   const request = await db
-    .prepare("SELECT * FROM development_requests WHERE id = ?")
+    .prepare(
+      `SELECT r.*,
+      CASE
+        WHEN r.overall_status = 'blocked' THEN 'Resolve blocker'
+        WHEN EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure','cancelled','timed_out','action_required')) THEN 'Fix failing CI'
+        WHEN r.overall_status = 'awaiting_adam' THEN 'Adam: QA required'
+        WHEN r.overall_status = 'awaiting_joe' THEN 'Joe: QA required'
+        WHEN r.overall_status = 'awaiting_mutual_approval' THEN 'Mutual approval'
+        WHEN r.overall_status = 'ready_for_dev' THEN 'Ready for Dev'
+        WHEN r.overall_status = 'ready_for_main' THEN 'Ready for Main'
+        WHEN r.overall_status = 'on_main_needs_verification' THEN 'Verify production'
+        ELSE COALESCE(r.next_action, 'Review status')
+      END AS next_action
+      FROM development_requests r WHERE r.id = ?`,
+    )
     .bind(id)
     .first<DevelopmentRequest>();
   if (!request) return null;
 
-  const [links, branches, qa, approvals, activity] = await Promise.all([
-    db
-      .prepare(
-        "SELECT * FROM development_links WHERE development_request_id = ? ORDER BY created_at",
-      )
-      .bind(id)
-      .all(),
-    db
-      .prepare(
-        "SELECT * FROM development_branch_states WHERE development_request_id = ? ORDER BY branch",
-      )
-      .bind(id)
-      .all(),
-    db
-      .prepare(
-        "SELECT * FROM qa_handoffs WHERE development_request_id = ? ORDER BY id",
-      )
-      .bind(id)
-      .all<QaHandoff>(),
-    db
-      .prepare(
-        "SELECT * FROM development_approvals WHERE development_request_id = ? ORDER BY created_at DESC",
-      )
-      .bind(id)
-      .all<DevelopmentApproval>(),
-    db
-      .prepare(
-        "SELECT * FROM development_activity_events WHERE development_request_id = ? ORDER BY occurred_at DESC",
-      )
-      .bind(id)
-      .all<ActivityEvent>(),
-  ]);
+  const [links, branches, qa, approvals, activity, githubItems] =
+    await Promise.all([
+      db
+        .prepare(
+          "SELECT * FROM development_links WHERE development_request_id = ? ORDER BY created_at",
+        )
+        .bind(id)
+        .all(),
+      db
+        .prepare(
+          "SELECT * FROM development_branch_states WHERE development_request_id = ? ORDER BY branch",
+        )
+        .bind(id)
+        .all(),
+      db
+        .prepare(
+          "SELECT * FROM qa_handoffs WHERE development_request_id = ? ORDER BY id",
+        )
+        .bind(id)
+        .all<QaHandoff>(),
+      db
+        .prepare(
+          "SELECT * FROM development_approvals WHERE development_request_id = ? ORDER BY created_at DESC",
+        )
+        .bind(id)
+        .all<DevelopmentApproval>(),
+      db
+        .prepare(
+          "SELECT * FROM development_activity_events WHERE development_request_id = ? ORDER BY occurred_at DESC",
+        )
+        .bind(id)
+        .all<ActivityEvent>(),
+      db
+        .prepare(
+          "SELECT id, kind, number, title, state, payload_json, github_updated_at FROM github_sync_items WHERE development_request_id = ? ORDER BY github_updated_at DESC, id DESC",
+        )
+        .bind(id)
+        .all<DevelopmentGitHubItem>(),
+    ]);
 
   return {
     request,
@@ -246,6 +271,7 @@ export async function getDevelopmentRequest(
     qa: qa.results || [],
     approvals: approvals.results || [],
     activity: activity.results || [],
+    githubItems: githubItems.results || [],
   };
 }
 

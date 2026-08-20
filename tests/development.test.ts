@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   assertCanWriteDevelopment,
   createDevelopmentRequest,
@@ -17,6 +18,10 @@ const adam: DevelopmentActor = {
 };
 
 const viewer: DevelopmentActor = { ...adam, role: "VIEWER" };
+const developmentRepository = readFileSync(
+  new URL("../app/lib/development/repository.server.ts", import.meta.url),
+  "utf8",
+);
 
 function fakeDatabase() {
   const statements: unknown[] = [];
@@ -129,5 +134,20 @@ describe("development foundation", () => {
     expect(serialized).toContain("development_request_updated");
     expect(serialized).not.toContain("github_issue_id");
     expect(serialized).not.toContain("ci_state");
+  });
+
+  it("keeps operational Next Action rules deterministic and CI-aware", () => {
+    for (const action of [
+      "Resolve blocker",
+      "Fix failing CI",
+      "Adam: QA required",
+      "Joe: QA required",
+      "Ready for Dev",
+      "Ready for Main",
+      "Verify production",
+    ]) {
+      expect(developmentRepository).toContain(action);
+    }
+    expect(developmentRepository).not.toMatch(/openai|anthropic|gemini/i);
   });
 });

@@ -68,6 +68,57 @@ function filtersFromUrl(url: URL): DevelopmentFilters {
   };
 }
 
+function developmentUrl(
+  filters: DevelopmentFilters,
+  detail?: { request: string; tab?: string },
+) {
+  const params = new URLSearchParams();
+  const values: [string, string | undefined][] = [
+    ["search", filters.search],
+    ["priority", filters.priority],
+    ["type", filters.type],
+    ["area", filters.area],
+    ["owner", filters.owner],
+    ["qa_partner", filters.qaPartner],
+    ["status", filters.status],
+    ["attention", filters.attention],
+    ["view", filters.view],
+    ["sort", filters.sort],
+  ];
+  for (const [key, value] of values) if (value) params.set(key, value);
+  if (detail) {
+    params.set("request", detail.request);
+    if (detail.tab) params.set("tab", detail.tab);
+  }
+  const query = params.toString();
+  return query ? `/development?${query}` : "/development";
+}
+
+function parseGitHubPayload(value: string | undefined) {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as Record<string, any>;
+  } catch {
+    return null;
+  }
+}
+
+function ciFromPayload(payload: Record<string, any> | null) {
+  const checks = Array.isArray(payload?.checks) ? payload.checks : [];
+  if (!checks.length) return "Unknown";
+  if (
+    checks.some((check: any) =>
+      ["failure", "cancelled", "timed_out", "action_required"].includes(
+        check.conclusion,
+      ),
+    )
+  )
+    return "Failing";
+  if (checks.some((check: any) => check.status !== "completed"))
+    return "Pending";
+  return "Passing";
+}
+
 export async function loader({ request, context }: Route.LoaderArgs) {
   const env = environment(context);
   const user = await requireAuthenticatedUser(request, env);
@@ -297,6 +348,18 @@ export default function Development({
     github,
     githubConnection,
   } = loaderData;
+  const developmentListUrl = developmentUrl(filters);
+  const githubIssue = detail?.githubItems.find((item) => item.kind === "issue");
+  const githubPullRequest = detail?.githubItems.find(
+    (item) => item.kind === "pull_request",
+  );
+  const pullRequestPayload = parseGitHubPayload(
+    githubPullRequest?.payload_json,
+  );
+  const issueLink = detail?.links.find((link: any) => link.type === "issue");
+  const pullRequestLink = detail?.links.find(
+    (link: any) => link.type === "pull_request",
+  );
 
   return (
     <main className="development-page">
@@ -387,7 +450,7 @@ export default function Development({
           <ul className="attention-list">
             {attention.map((item) => (
               <li key={item.id}>
-                <Link to={`/development?request=${item.id}`}>
+                <Link to={developmentUrl(filters, { request: item.id })}>
                   {item.priority} · {item.title}
                 </Link>
                 <span>
@@ -680,7 +743,7 @@ export default function Development({
                 requests.map((item) => (
                   <tr key={item.id}>
                     <td>
-                      <Link to={`/development?request=${item.id}`}>
+                      <Link to={developmentUrl(filters, { request: item.id })}>
                         <strong>{item.title}</strong>
                         <span>
                           {item.external_key || item.id.slice(0, 8)}
@@ -907,7 +970,7 @@ export default function Development({
               <Link
                 className="icon-link"
                 aria-label="Close request detail"
-                to="/development"
+                to={developmentListUrl}
               >
                 ×
               </Link>
@@ -921,7 +984,10 @@ export default function Development({
               <Link
                 key={tab}
                 aria-current={detailTab === tab ? "page" : undefined}
-                to={`/development?request=${detail.request.id}&tab=${tab}`}
+                to={developmentUrl(filters, {
+                  request: detail.request.id,
+                  tab,
+                })}
               >
                 {tab[0].toUpperCase() + tab.slice(1)}
               </Link>
@@ -1262,30 +1328,122 @@ export default function Development({
             {detailTab === "github" ? (
               <>
                 <section>
-                  <h3>Issue / PR</h3>
-                  {detail.links.length ? (
-                    <ul className="github-detail-links">
-                      {detail.links.map((link: any) => (
-                        <li key={link.id}>
-                          <a
-                            href={link.url || "#"}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            {link.type.replaceAll("_", " ")}
-                          </a>
-                          <small>
-                            {link.provider === "manual"
-                              ? "Manual link"
-                              : "GitHub sync"}
-                          </small>
-                        </li>
-                      ))}
-                    </ul>
+                  <h3>Issue</h3>
+                  {githubIssue || issueLink ? (
+                    <article className="github-record-card">
+                      <div>
+                        <strong>
+                          {githubIssue
+                            ? `#${githubIssue.number} · ${githubIssue.title}`
+                            : "Manually linked issue"}
+                        </strong>
+                        <StatusBadge
+                          value={githubIssue?.state || "Not synced"}
+                        />
+                      </div>
+                      {issueLink?.url ? (
+                        <a
+                          href={issueLink.url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open issue ↗
+                        </a>
+                      ) : null}
+                    </article>
                   ) : (
                     <p className="empty-state">
-                      Pending GitHub connection. Issue, PR, CI, and reviewer
-                      data are not synced.
+                      Pending GitHub connection. Issue data is not synced.
+                    </p>
+                  )}
+                  <h3>Pull Request</h3>
+                  {githubPullRequest || pullRequestLink ? (
+                    <article className="github-record-card">
+                      <div>
+                        <strong>
+                          {githubPullRequest
+                            ? `#${githubPullRequest.number} · ${githubPullRequest.title}`
+                            : "Manually linked pull request"}
+                        </strong>
+                        <StatusBadge
+                          value={githubPullRequest?.state || "Not synced"}
+                        />
+                      </div>
+                      <dl>
+                        <div>
+                          <dt>CI</dt>
+                          <dd>
+                            <StatusBadge
+                              value={ciFromPayload(pullRequestPayload)}
+                            />
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Reviewers</dt>
+                          <dd>
+                            {pullRequestPayload?.reviewers?.length
+                              ? pullRequestPayload.reviewers.join(", ")
+                              : "Unavailable"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Approvals</dt>
+                          <dd>
+                            {pullRequestPayload?.approvals ?? "Unavailable"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Source</dt>
+                          <dd>
+                            {pullRequestPayload?.sourceBranch || "Unavailable"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Target</dt>
+                          <dd>
+                            {pullRequestPayload?.targetBranch || "Unavailable"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Head SHA</dt>
+                          <dd>
+                            <code>
+                              {pullRequestPayload?.headSha?.slice(0, 8) ||
+                                "Unavailable"}
+                            </code>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Merge SHA</dt>
+                          <dd>
+                            <code>
+                              {pullRequestPayload?.mergeSha?.slice(0, 8) ||
+                                "Not merged"}
+                            </code>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Updated</dt>
+                          <dd>
+                            {githubPullRequest?.github_updated_at ||
+                              "Not synced"}
+                          </dd>
+                        </div>
+                      </dl>
+                      {pullRequestLink?.url ? (
+                        <a
+                          href={pullRequestLink.url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open pull request ↗
+                        </a>
+                      ) : null}
+                    </article>
+                  ) : (
+                    <p className="empty-state">
+                      Pending GitHub connection. PR, CI, and reviewer data are
+                      not synced.
                     </p>
                   )}
                 </section>

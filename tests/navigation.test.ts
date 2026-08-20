@@ -233,8 +233,32 @@ describe("Content & LinkedIn navigation organization", () => {
       expect(developmentRoute).toContain(`"${tab}"`);
     expect(developmentRoute).toContain("QA workflow stages");
     expect(developmentRoute).toContain("branch-state-matrix");
-    expect(developmentRoute).toContain("Issue, PR, CI, and reviewer");
-    expect(developmentRoute).toContain("data are not synced.");
+    expect(developmentRoute).toContain("Issue data is not synced.");
+    expect(developmentRoute).toContain("PR, CI, and reviewer data are");
+    expect(developmentRoute).toContain("not synced.");
     expect(consoleScaffold).toContain("loaderData.selectedRequest");
+  });
+
+  it("preserves active filters through routed request drawer navigation", () => {
+    expect(developmentRoute).toContain("function developmentUrl");
+    expect(developmentRoute).toContain("developmentListUrl");
+    expect(developmentRoute).toContain('params.set("request", detail.request)');
+    expect(developmentRoute).toContain('params.set("tab", detail.tab)');
+  });
+
+  it("presents synchronized PR review and CI metadata without mutation controls", () => {
+    for (const field of [
+      "Reviewers",
+      "Approvals",
+      "Source",
+      "Target",
+      "Head SHA",
+      "Merge SHA",
+    ])
+      expect(developmentRoute).toContain(field);
+    expect(developmentRoute).toContain("ciFromPayload");
+    expect(developmentRoute).toContain("githubItems");
+    expect(developmentRoute).not.toContain('name="ci_state"');
+    expect(developmentRoute).not.toContain('name="branch_state"');
   });
 });

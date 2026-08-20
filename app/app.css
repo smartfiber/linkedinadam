@@ -1166,6 +1166,13 @@ button.secondary {
 .github-detail-links small { color: #69758c; font-size: 10px; }
 .github-detail-links { display: grid; gap: 8px; padding: 0; list-style: none; }
 .github-detail-links li { display: flex; justify-content: space-between; gap: 12px; }
+.github-record-card { display: grid; gap: 12px; padding: 12px; border: 1px solid #e1e6ee; border-radius: 7px; background: #fafbfd; }
+.github-record-card > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.github-record-card dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; margin: 0; }
+.github-record-card dl div { min-width: 0; }
+.github-record-card dt { color: #69758c; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.github-record-card dd { margin: 3px 0 0; overflow-wrap: anywhere; color: #344057; font-size: 11px; }
+.github-record-card > a { width: max-content; color: #176c4a; font-size: 11px; font-weight: 800; }
 
 @media (max-width: 1100px) {
   .development-summary-grid { grid-template-columns: repeat(4, 1fr); }
@@ -1185,6 +1192,7 @@ button.secondary {
   .request-detail-actions { order: -1; justify-content: space-between; }
   .qa-stage-flow,
   .branch-state-matrix { grid-template-columns: 1fr 1fr; }
+  .github-record-card dl { grid-template-columns: 1fr; }
 }
 
 /* Connection growth workspace */

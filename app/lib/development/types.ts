@@ -166,6 +166,16 @@ export type DevelopmentApproval = {
   created_at: string;
 };
 
+export type DevelopmentGitHubItem = {
+  id: number;
+  kind: "issue" | "pull_request";
+  number: number;
+  title: string;
+  state: string;
+  payload_json: string;
+  github_updated_at: string | null;
+};
+
 export type DevelopmentActor = Pick<
   AuthenticatedUser,
   "email" | "displayName" | "subject" | "role"
