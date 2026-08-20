@@ -152,6 +152,23 @@ export type DevelopmentApproval = {
 export type DevelopmentActor = Pick<AuthenticatedUser, "email" | "displayName" | "subject" | "role">;
 
 export type GitHubSyncStatus = {
-  lastRun: { status: string; finished_at: string | null; error_message: string | null } | null;
+  lastRun: {
+    id: number;
+    status: string;
+    trigger: string | null;
+    initiator: string | null;
+    started_at: string;
+    finished_at: string | null;
+    duration_seconds: number | null;
+    issues_seen: number;
+    pull_requests_seen: number;
+    branches_seen: number;
+    created_count: number;
+    matched_count: number;
+    ambiguous_count: number;
+    skipped_count: number;
+    conflict_count: number;
+    error_message: string | null;
+  } | null;
   branches: { role: string; branch_name: string | null; status: string; sha: string | null }[];
 };

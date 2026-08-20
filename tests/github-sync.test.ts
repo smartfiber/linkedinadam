@@ -42,6 +42,7 @@ describe("read-only GitHub sync helpers", () => {
     expect(mapped[0]).toMatchObject({ role: "adam", status: "MAPPED" });
     expect(mapped[1]).toMatchObject({ role: "joe", branchName: "joe", status: "MAPPED" });
     expect(discoverBranchMappings([{ name: "adam", sha: "a" }, { name: "joe", sha: "j" }, { name: "joe-work", sha: "jw" }])[1]).toMatchObject({ status: "NEEDS_MAPPING", branchName: null });
+    expect(discoverBranchMappings([{ name: "Adam", sha: "a" }, { name: "dev", sha: "d" }, { name: "main", sha: "m" }])[1]).toMatchObject({ status: "NEEDS_MAPPING", branchName: null, candidates: [] });
   });
 
   it("extracts linked issue references and computes conservative equivalence", () => {
