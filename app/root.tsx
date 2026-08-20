@@ -9,6 +9,12 @@ import {
 
 import type { Route } from "./+types/root";
 import "./app.css";
+import { AppShell } from "./components/AppShell";
+
+export const meta: Route.MetaFunction = () => [
+	{ title: "DEVOS — Net-X Dev OS" },
+	{ name: "description", content: "Net-X development and operating system" },
+];
 
 export const links: Route.LinksFunction = () => [
 	{ rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
@@ -46,7 +52,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-	return <Outlet />;
+	return <AppShell><Outlet /></AppShell>;
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {

@@ -12,9 +12,34 @@ body {
   margin: 0;
 }
 
+.devos-shell { min-height: 100vh; padding-left: 248px; transition: padding-left .2s ease; }
+.devos-main { min-width: 0; }
+.devos-sidebar { position: fixed; inset: 0 auto 0 0; z-index: 50; display: flex; width: 248px; flex-direction: column; padding: 18px 14px; color: white; background: #10182a; transition: width .2s ease; }
+.devos-brand { display: flex; align-items: center; gap: 11px; min-height: 54px; padding: 6px 8px 16px; overflow: hidden; }
+.devos-brand img { width: 36px; height: 36px; flex: 0 0 36px; object-fit: contain; }
+.devos-brand div { display: grid; min-width: 150px; }
+.devos-brand strong { letter-spacing: .08em; }
+.devos-brand span { color: #98a7c3; font-size: 11px; }
+.nav-collapse { position: absolute; top: 26px; right: -13px; display: grid; width: 26px; height: 26px; place-items: center; border: 1px solid #33415d; border-radius: 50%; color: white; background: #17233a; cursor: pointer; }
+.devos-sidebar nav { display: grid; gap: 5px; margin-top: 12px; }
+.devos-sidebar nav a { display: flex; align-items: center; gap: 11px; min-height: 42px; padding: 9px 11px; border-radius: 9px; color: #b7c2d8; text-decoration: none; white-space: nowrap; overflow: hidden; }
+.devos-sidebar nav a:hover, .devos-sidebar nav a.active { color: white; background: rgba(255,255,255,.1); }
+.devos-sidebar nav a.active { box-shadow: inset 3px 0 #55c892; }
+.devos-sidebar nav small { margin-left: auto; color: #8290aa; font-size: 8px; letter-spacing: .08em; }
+.nav-icon { display: inline-grid; width: 22px; flex: 0 0 22px; place-items: center; font-size: 17px; }
+.nav-label { overflow: hidden; text-overflow: ellipsis; }
+.devos-sidebar-foot { display: flex; align-items: center; gap: 11px; margin-top: auto; padding: 12px 10px; color: #7f8da8; font-size: 10px; white-space: nowrap; overflow: hidden; }
+.nav-collapsed { padding-left: 72px; }
+.nav-collapsed .devos-sidebar { width: 72px; }
+.nav-collapsed .devos-brand div, .nav-collapsed .nav-label, .nav-collapsed .devos-sidebar nav small { display: none; }
+.nav-collapsed .devos-brand { padding-inline: 4px; }
+.nav-collapsed .devos-sidebar nav a { justify-content: center; padding-inline: 8px; }
+.nav-tooltip { display: none; }
+.nav-collapsed .devos-sidebar nav a { position: relative; overflow: visible; }
+.nav-collapsed .devos-sidebar nav a:hover .nav-tooltip,
+.nav-collapsed .devos-sidebar nav a:focus-visible .nav-tooltip { position: absolute; left: 54px; z-index: 70; display: block; padding: 7px 9px; border: 1px solid #33415d; border-radius: 7px; color: white; background: #17233a; box-shadow: 0 5px 14px rgba(0,0,0,.22); font-size: 11px; font-weight: 700; }
+
 .dashboard {
-  display: grid;
-  grid-template-columns: 240px 1fr;
   min-height: 100vh;
 }
 
@@ -114,9 +139,38 @@ body {
 .command-metrics a { display: grid; gap: 5px; padding: 12px; border-radius: 9px; color: #526079; background: #f3f5f8; text-decoration: none; }
 .command-metrics span { font-size: 10px; font-weight: 800; text-transform: uppercase; }.command-metrics strong { color: #172033; font-size: 22px; }
 .command-attention { margin-top: 18px; }.command-attention ul { display: grid; gap: 7px; padding: 0; list-style: none; }.command-attention li { display: flex; justify-content: space-between; gap: 12px; }.command-attention li a { color: #176c4a; font-weight: 700; }.command-attention li span { color: #69758c; }
+.command-agents { margin-bottom: 24px; }
+.command-agent-metrics, .agent-summary { display: grid; grid-template-columns: repeat(4,minmax(110px,1fr)); gap: 10px; }
+.command-agent-metrics a, .agent-summary article { display: grid; gap: 5px; padding: 13px; border: 1px solid #e1e6ee; border-radius: 9px; color: #526079; background: #fafbfd; text-decoration: none; }
+.command-agent-metrics strong, .agent-summary strong { color: #172033; font-size: 24px; }.command-agent-metrics span,.agent-summary span { font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.latest-agent-result { margin-bottom: 0; color: #69758c; font-size: 12px; }
+.agent-control { max-width: none; }.agent-summary,.agent-filters,.agent-control-grid,.approval-center { max-width: 1400px; margin-inline: auto; }
+.agent-filters { margin-block: 18px; background: white; border: 1px solid #e1e6ee; border-radius: 10px; }
+.agent-control-grid { display: grid; grid-template-columns: repeat(3,minmax(260px,1fr)); gap: 14px; }
+.agent-control-card { padding: 18px; border: 1px solid #dfe5ed; border-radius: 12px; background: white; box-shadow: 0 6px 18px rgba(30,45,70,.05); }
+.agent-card-head { display: flex; justify-content: space-between; align-items: center; }.agent-card-head small { color: #7a8497; text-transform: uppercase; }
+.agent-control-card h2 { margin: 14px 0 4px; font-size: 18px; }.agent-control-card h2 a { color: #172033; text-decoration: none; }.agent-control-card > p { margin-top: 0; color: #69758c; }
+.agent-control-card dl,.agent-detail-grid dl { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }.agent-control-card dl div,.agent-detail-grid dl div { min-width: 0; }.agent-control-card dt,.agent-detail-grid dt { color: #7a8497; font-size: 9px; font-weight: 800; text-transform: uppercase; }.agent-control-card dd,.agent-detail-grid dd { margin: 3px 0 0; overflow-wrap: anywhere; font-size: 11px; }
+.approval-callout { display: block; margin-top: 12px; color: #8a6111; }.approval-center { margin-top: 22px; }
+.approval-list { display: grid; gap: 10px; }.approval-list article { display: flex; justify-content: space-between; gap: 18px; padding: 12px; border: 1px solid #e1e6ee; border-radius: 9px; }.approval-list p { margin: 5px 0; }.approval-list form { display: flex; align-items: end; flex-wrap: wrap; gap: 6px; }.approval-list label { display: grid; gap: 4px; font-size: 10px; font-weight: 800; }
+.agent-detail-grid { display: grid; grid-template-columns: repeat(3,minmax(220px,1fr)); gap: 14px; max-width: 1400px; margin: auto; }.agent-detail-grid a { color: #176c4a; font-weight: 750; }.agent-run-panel { max-width: 1400px; margin: 16px auto; }.agent-history-grid { display: grid; grid-template-columns: repeat(2,minmax(280px,1fr)); gap: 14px; max-width: 1400px; margin: auto; }.agent-history-grid pre { max-width: 100%; padding: 10px; overflow: auto; border-radius: 7px; background: #10182a; color: #dbe8e1; white-space: pre-wrap; }.connection-banner,.console-prohibited { max-width: 1400px; margin: 0 auto 16px; padding: 12px 14px; border: 1px solid #e3c979; border-radius: 9px; color: #76540c; background: #fff8da; font-weight: 800; }.console-prohibited { margin-top: 16px; }
 .agent-categories { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-bottom: 16px; }.agent-categories article { padding: 13px; border: 1px solid #e1e6ee; border-radius: 9px; background: #fafbfd; }.agent-categories p { color: #69758c; font-size: 12px; }.agent-categories span { color: #8a6111; font-size: 10px; font-weight: 800; text-transform: uppercase; }.agent-card dl { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 12px 0 0; }.agent-card dl div { display: grid; gap: 2px; }.agent-card dt { color: #7a8497; font-size: 9px; font-weight: 800; text-transform: uppercase; }.agent-card dd { margin: 0; font-size: 11px; }
 @media (max-width: 1000px) { .workspace-grid { grid-template-columns: repeat(2, 1fr); }.command-metrics { grid-template-columns: repeat(4, 1fr); }.detail-overview dl { grid-template-columns: repeat(2, 1fr); }.console-grid,.console-output-grid { grid-template-columns: repeat(2,1fr); } }
+@media (max-width: 1100px) { .agent-control-grid,.agent-detail-grid { grid-template-columns: repeat(2,1fr); } }
 @media (max-width: 650px) { .workspace-page { padding: 24px 12px; }.workspace-header { display: grid; }.workspace-grid,.qa-actions,.console-grid,.console-output-grid,.agent-categories { grid-template-columns: 1fr; }.command-metrics { grid-template-columns: repeat(2,1fr); }.qa-action,.command-attention li { flex-direction: column; }.detail-overview dl { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 760px) {
+  .devos-shell, .nav-collapsed { padding-left: 0; padding-bottom: 66px; }
+  .devos-sidebar, .nav-collapsed .devos-sidebar { inset: auto 0 0; width: 100%; height: 66px; padding: 8px; flex-direction: row; overflow-x: auto; }
+  .devos-brand, .nav-collapse, .devos-sidebar-foot { display: none; }
+  .devos-sidebar nav { display: flex; width: 100%; margin: 0; justify-content: space-around; }
+  .devos-sidebar nav a, .nav-collapsed .devos-sidebar nav a { min-width: 52px; justify-content: center; padding: 6px; }
+  .devos-sidebar .nav-label, .devos-sidebar nav small { display: none; }
+  .nav-tooltip { display: none !important; }
+  .content { padding: 24px 14px; }
+  .agent-control-grid,.agent-detail-grid,.agent-history-grid { grid-template-columns: 1fr; }
+  .agent-summary,.command-agent-metrics { grid-template-columns: repeat(2,1fr); }
+  .approval-list article { display: grid; }
+}
 
 .content {
   padding: 42px;

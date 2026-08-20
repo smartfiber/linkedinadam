@@ -1,8 +1,16 @@
-# Net-X Back Office foundation
+# Net-X Dev OS (DEVOS)
 
-LinkedInAdam remains the existing Worker and repository. This foundation adds
-the first internal Development Control Center without changing the existing
-LinkedIn publishing or content workflows.
+Net-X Dev OS is the user-facing internal operating system for Development,
+Content & LinkedIn, and approval-controlled agents. Existing LinkedIn
+publishing and content workflows remain unchanged.
+
+## Legacy infrastructure identifiers
+
+The GitHub repository remains `SmartFiber/LinkedinAdam`, the Cloudflare Worker
+remains `linkedinadam`, the D1 database remains `linkedinadam-db`, and its D1
+binding remains `linkedinadam_db`. OAuth callback URLs, table names, migration
+history, and environment/secret names are also preserved. These identifiers
+are compatibility contracts, not user-facing product branding.
 
 ## Cloudflare Access
 
@@ -115,7 +123,7 @@ defaults):
 ```text
 GITHUB_REPOSITORY_OWNER=colossalbreacker
 GITHUB_REPOSITORY_NAME=net-x
-GITHUB_SYNC_ENABLED=true
+GITHUB_SYNC_ENABLED=false
 ```
 
 The read-only GitHub App requires these server-only values:
@@ -125,6 +133,12 @@ GITHUB_APP_ID=<GitHub App id>
 GITHUB_APP_PRIVATE_KEY=<GitHub App private key>
 GITHUB_APP_INSTALLATION_ID=<installation id for colossalbreacker/net-x>
 ```
+
+### GitHub App status
+
+The `Net-X Back Office` GitHub App is installed on
+`colossalbreacker/net-x`. Credential configuration and authenticated readiness
+are separate from installation; sync remains disabled until both are verified.
 
 Create the App under the account or organization that should control it. Use
 the deployed Worker URL as the homepage, do not request user authorization,
@@ -143,12 +157,29 @@ be used directly; the adapter converts it to PKCS#8 in memory for Web Crypto.
 
 Add the three credentials with `wrangler secret put GITHUB_APP_ID`, `wrangler
 secret put GITHUB_APP_PRIVATE_KEY`, and `wrangler secret put
-GITHUB_APP_INSTALLATION_ID`. The repository variables and
-`GITHUB_SYNC_ENABLED` are committed in `wrangler.json`. Never prefix any of
-these values with `VITE_`, commit a downloaded PEM file, or return the values
+GITHUB_APP_INSTALLATION_ID`. The repository variables and disabled
+`GITHUB_SYNC_ENABLED` switch are committed in `wrangler.json`. Never prefix any
+of these values with `VITE_`, commit a downloaded PEM file, or return the values
 from a route loader. Before enabling production sync, confirm migrations
 `0015_add_development_foundation.sql` and `0016_add_github_sync.sql` have been
 applied to the remote D1 database after the documented backup/rehearsal.
+
+### GitHub sync activation gate
+
+Change `GITHUB_SYNC_ENABLED` to `true` only after a controlled readiness check
+confirms all of the following:
+
+1. the App is installed only on `colossalbreacker/net-x`;
+2. the App ID, installation ID, and private key are configured securely;
+3. App JWT creation and installation-token exchange succeed;
+4. the repository, issues, pull requests, branches, checks, commit statuses,
+   and reviews can all be read;
+5. the installation has no GitHub repository write permission;
+6. migrations 0015 and 0016 are present in production; and
+7. one bounded manual/readiness sync succeeds without partial records or
+   exposed credential details.
+
+Installation by itself is not authorization to enable scheduled sync.
 
 Until those values exist, scheduled sync reports a configuration error and
 does not create records. If webhooks are enabled later, create a separate
@@ -205,6 +236,57 @@ publishing credentials, and generated-image storage remain server-side.
   provider. No email provider or sending path exists in this phase.
 - **Newsletters** will reuse drafting, review, approval, and scheduling concepts,
   then add recipient models later.
-- **Agents** may eventually operate across Development, Content & LinkedIn,
-  People, Outreach, and Newsletters. Existing orchestration/autopilot remains
-  the only executable automation in this phase.
+- **Agents** now share the DEVOS control plane across Development and existing
+  Content & LinkedIn automation. People, Outreach, and Newsletters remain
+  future attachment points.
+
+## Agent control plane
+
+Migration `0017_add_devos_agent_control_plane.sql` adds the normalized agent
+registry, tools, audited runs, append-only run events, approvals, and disabled-
+by-default schedules. `DevosAgentRuntime` provides per-agent Durable Object
+identity and state while D1 remains the queryable control-plane ledger.
+
+Existing Strategy, Content Planner, Post Drafting, Image Generation,
+Connection Targeting, Engagement Queue, Conversation Signal, Lead Routing,
+Post Orchestration, and Daily Operations Autopilot capabilities are registered
+as wrappers around their existing routes and services. They are not duplicated.
+Only deterministic READ/ANALYZE/DRAFT Development controls run through the new
+runtime. Code execution, repository writes, PR actions, deployments, external
+email, and automatic LinkedIn publishing are unavailable.
+
+The model-provider registry anticipates OpenAI, Anthropic, Gemini, and Workers
+AI authentication modes. Only the existing server-only OpenAI integration is
+marked active; it is reused directly by existing content services rather than
+instantiating a parallel client.
+
+### Agent registry ownership
+
+After migration 0017, `devos_agents` is the authoritative source for mutable
+operational fields: name, category, role, purpose, human owner, status,
+autonomy, provider, model, and implementation state. The built-in code catalog
+defines immutable route adapters, tool descriptions, and maximum capabilities;
+a database edit cannot grant executable code or a permission that was not
+shipped in code. Run status and results come from `devos_agent_runs`, events,
+approvals, schedules, and Durable Object control state.
+
+The migration inserts each built-in slug once. DEVOS does not reseed or update
+the registry during Worker startup, so future human configuration is not
+overwritten and duplicate startup rows cannot be created.
+
+### Migration-tolerant release order
+
+Agent-dependent loaders first inspect `sqlite_master` for all six control-plane
+tables. Missing tables produce a specific not-initialized UI; failures of the
+schema check itself are logged and rethrown. This makes the safe production
+sequence:
+
+1. approve and merge the reviewed PR;
+2. allow the automatic Worker deployment to complete;
+3. verify the existing application remains available with agents not initialized;
+4. apply D1 migration 0017;
+5. verify all six tables and built-in records;
+6. reload the Agent Control Center and complete authenticated smoke testing.
+
+Migration 0017 is additive and schedules remain disabled by default. It is not
+applied automatically by a Worker deployment.

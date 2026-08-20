@@ -8,6 +8,8 @@ export default [
   index("routes/home.tsx"),
   route("development", "routes/development.tsx"),
   route("development/console", "routes/development-console.tsx"),
+  route("agents", "routes/agents.tsx"),
+  route("agents/:agentSlug", "routes/agent-detail.tsx"),
   route("content-linkedin", "routes/content-linkedin.tsx"),
   route("people", "routes/people.tsx"),
   route("outreach", "routes/outreach.tsx"),

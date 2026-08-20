@@ -1,9 +1,9 @@
-# Net-X Back Office
+# Net-X Dev OS (DEVOS)
 
-Net-X Back Office is the internal operations application for [Net-X](https://net-x.io/).
-It combines the existing LinkedIn content workflows with a development control
-center that can read issues, pull requests, reviews, checks, and branch state
-from the Net-X GitHub repository.
+Net-X Dev OS is the internal operating system for [Net-X](https://net-x.io/).
+It combines the existing LinkedIn content workflows, the Development Control
+Center, and approval-controlled agents. For operational details, see
+[`docs/net-x-back-office.md`](docs/net-x-back-office.md).
 
 The repository and Cloudflare Worker retain the historical `linkedinadam` name
 while the application migrates to the broader Net-X internal platform.
@@ -75,8 +75,9 @@ The local server is available at `http://localhost:5173`.
 
 ## GitHub App connection
 
-The development control center uses a server-side GitHub App rather than a
-personal access token. The App must have read-only repository permissions for
+The Development Control Center uses a server-side GitHub App rather than a
+personal access token. The App is installed only on `colossalbreacker/net-x`
+and must have read-only repository permissions for
 Contents, Issues, Pull requests, Checks, and Commit statuses, with no
 organization or account permissions.
 
@@ -89,11 +90,13 @@ GITHUB_APP_PRIVATE_KEY
 GITHUB_APP_INSTALLATION_ID
 ```
 
-The repository owner, repository name, and sync switch are ordinary Worker
-variables in `wrangler.json`. GitHub's downloaded PKCS#1 PEM key is supported
-directly and is converted to PKCS#8 in memory for signing.
+The repository owner, repository name, and disabled sync switch are ordinary
+Worker variables in `wrangler.json`. Installation alone does not activate the
+integration: keep `GITHUB_SYNC_ENABLED=false` until all credentials and read
+permissions pass the documented readiness gate. GitHub's downloaded PKCS#1 PEM
+key is supported directly and converted to PKCS#8 in memory for signing.
 
-See [the Back Office operations guide](docs/net-x-back-office.md#read-only-github-development-sync)
+See [the DEVOS operations guide](docs/net-x-back-office.md#read-only-github-development-sync)
 for the complete registration, installation, migration, and security steps.
 
 ## Deployment safety
@@ -107,5 +110,5 @@ for the complete registration, installation, migration, and security steps.
   intentionally enabled.
 
 The production environment is expected to sit behind Cloudflare Access. See
-[the full Back Office guide](docs/net-x-back-office.md) for identity mapping,
+[the full DEVOS guide](docs/net-x-back-office.md) for identity mapping,
 database migration, approval, and provider-integration details.
