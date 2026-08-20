@@ -25,14 +25,16 @@ function fakeDatabase(initialRunning = false) {
   let running = initialRunning;
   let runRows = 0;
   const sql: string[] = [];
+  const bindings: unknown[][] = [];
   return {
     get runRows() { return runRows; },
     get sql() { return sql; },
+    get bindings() { return bindings; },
     prepare(statement: string) {
       sql.push(statement);
       let values: unknown[] = [];
       const prepared = {
-        bind(...bound: unknown[]) { values = bound; return prepared; },
+        bind(...bound: unknown[]) { values = bound; bindings.push(bound); return prepared; },
         async first() {
           if (statement.includes("INSERT INTO github_sync_runs")) {
             if (running) return null;
@@ -49,7 +51,7 @@ function fakeDatabase(initialRunning = false) {
       return prepared;
     },
     async batch(statements: unknown[]) { return statements; },
-  } as unknown as D1Database & { readonly runRows: number; readonly sql: string[] };
+  } as unknown as D1Database & { readonly runRows: number; readonly sql: string[]; readonly bindings: unknown[][] };
 }
 
 function environment(db = fakeDatabase()) {
@@ -110,6 +112,15 @@ describe("manual GitHub readiness sync", () => {
     expect(db.runRows).toBe(1);
     expect(result).toMatchObject({ status: "failed", error: "GitHub read-only synchronization failed." });
     expect(JSON.stringify(result)).not.toContain(privateKey);
+  });
+
+  it("persists a safe stage diagnostic for Worker subrequest failures", async () => {
+    const db = fakeDatabase();
+    const result = await runManualGitHubReadinessSync(environment(db), owner, { adapter: readOnlyAdapter({ listPullRequests: async () => { throw new Error("Too many subrequests."); } }) });
+    expect(result.status).toBe("failed");
+    const saved = db.bindings.flat().find(value => typeof value === "string" && value.includes('"diagnostic"')) as string;
+    expect(JSON.parse(saved)).toMatchObject({ diagnostic: { stage: "pull_requests", category: "worker_subrequest_limit" } });
+    expect(saved).not.toContain(privateKey);
   });
 
   it("exposes only read operations and permits Joe NEEDS_MAPPING", async () => {

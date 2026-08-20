@@ -78,10 +78,10 @@ describe("read-only GitHub sync helpers", () => {
     expect(values).toEqual(Array.from({ length: 40 }, (_, index) => index * 2));
   });
 
-  it("bounds readiness synchronization to the 50 most recent pull requests", () => {
+  it("bounds readiness synchronization to three recent pull requests for the Worker subrequest budget", () => {
     const values = Array.from({ length: 75 }, (_, index) => index);
-    expect(MAX_SYNC_PULL_REQUESTS).toBe(50);
-    expect(boundedPullRequests(values)).toEqual(values.slice(0, 50));
+    expect(MAX_SYNC_PULL_REQUESTS).toBe(3);
+    expect(boundedPullRequests(values)).toEqual(values.slice(0, 3));
   });
 
   it("verifies webhook HMAC signatures and rejects unsupported events", async () => {
