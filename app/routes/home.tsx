@@ -17,7 +17,7 @@ import { findScheduleConflict } from "../lib/contentWorkflow.server";
 import { requireAuthenticatedUser, type AccessEnvironment } from "../lib/auth.server";
 import { getDevelopmentSummary, listNeedsAttention } from "../lib/development/repository.server";
 import { agentControlSummary } from "../lib/agents/service.server";
-import { AGENT_CATALOG } from "../lib/agents/catalog";
+import { getAgentControlPlaneStatus } from "../lib/agents/readiness.server";
 
 type Employee = {
   id: number;
@@ -355,7 +355,11 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     `)
     .bind(`${today}T00:00`, `${dayAfterTomorrow}T00:00`)
     .all<DailyHomeDraft>();
-  const [developmentSummary, developmentAttention, agentSummary] = await Promise.all([getDevelopmentSummary(env.linkedinadam_db), listNeedsAttention(env.linkedinadam_db, user.email), agentControlSummary(env.linkedinadam_db)]);
+  const [developmentSummary, developmentAttention, agentStatus] = await Promise.all([getDevelopmentSummary(env.linkedinadam_db), listNeedsAttention(env.linkedinadam_db, user.email), getAgentControlPlaneStatus(env.linkedinadam_db)]);
+  if (agentStatus.state === "ERROR") throw agentStatus.error;
+  const agentSummary = agentStatus.state === "READY"
+    ? await agentControlSummary(env.linkedinadam_db)
+    : null;
 
   return {
     employees: employeeQuery.results ?? [],
@@ -369,7 +373,8 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     weekStart,
     developmentSummary,
     developmentAttention: developmentAttention.results || [],
-    agentSummary: { ...agentSummary, activeAgents: AGENT_CATALOG.filter(agent => agent.status === "active").length },
+    agentSummary,
+    agentControlPlaneReady: agentStatus.state === "READY",
     user,
   };
 }
@@ -1818,6 +1823,7 @@ export default function Home({
   const developmentSummary = loaderData.developmentSummary;
   const developmentAttention = loaderData.developmentAttention;
   const agentSummary = loaderData.agentSummary;
+  const agentControlPlaneReady = loaderData.agentControlPlaneReady;
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
 
@@ -1873,8 +1879,7 @@ export default function Home({
 
         <section className="command-agents panel">
           <div className="panel-heading"><div><p className="eyebrow">DEVOS AGENTS</p><h2>Agent control plane</h2></div><a className="secondary-link" href="/agents">Open Agent Control Center</a></div>
-          <div className="command-agent-metrics">{[["Active Agents",agentSummary.activeAgents],["Runs Today",agentSummary.runsToday],["Needs Approval",agentSummary.pendingApprovals],["Failed Runs",agentSummary.failedRuns]].map(([label,value])=><a href="/agents" key={label}><span>{label}</span><strong>{value}</strong></a>)}</div>
-          <p className="latest-agent-result">Latest useful result: {agentSummary.latest ? `${agentSummary.latest.agent_slug} · ${agentSummary.latest.created_at}` : "No DEVOS runs yet."}</p>
+          {agentControlPlaneReady && agentSummary ? <><div className="command-agent-metrics">{[["Active Agents",agentSummary.activeAgents],["Runs Today",agentSummary.runsToday],["Needs Approval",agentSummary.pendingApprovals],["Failed Runs",agentSummary.failedRuns]].map(([label,value])=><a href="/agents" key={label}><span>{label}</span><strong>{value}</strong></a>)}</div><p className="latest-agent-result">Latest useful result: {agentSummary.latest ? `${agentSummary.latest.agent_slug} · ${agentSummary.latest.created_at}` : "No DEVOS runs yet."}</p></> : <div className="agent-initialization-state"><strong>Agent Control Center not initialized</strong><p>Development and Content &amp; LinkedIn remain available while the agent database migration is pending.</p></div>}
         </section>
 
         <section className="dashboard-daily panel">

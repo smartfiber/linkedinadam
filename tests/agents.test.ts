@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe,expect,it } from "vitest";
-import { AGENT_CATALOG,getAgent } from "../app/lib/agents/catalog";
+import { BUILTIN_AGENT_DEFINITIONS,getAgentDefinition } from "../app/lib/agents/catalog";
 import { canExecuteCapability,classifyAgentAction } from "../app/lib/agents/permissions";
 import { MODEL_PROVIDERS } from "../app/lib/agents/providers";
 
@@ -12,12 +12,12 @@ const detailRoute=readFileSync(new URL("../app/routes/agent-detail.tsx",import.m
 
 describe("DEVOS agent control plane",()=>{
   it("registers existing workflows without duplicating their implementations",()=>{
-    for(const slug of ["strategy-agent","content-planner","post-drafting-agent","image-generation","connection-targeting-agent","post-orchestration","daily-autopilot"]) expect(getAgent(slug)?.implementation).toBe("existing");
-    expect(AGENT_CATALOG.filter(agent=>agent.implementation === "existing").length).toBeGreaterThanOrEqual(10);
+    for(const slug of ["strategy-agent","content-planner","post-drafting-agent","image-generation","connection-targeting-agent","post-orchestration","daily-autopilot"]) expect(getAgentDefinition(slug)?.implementation).toBe("existing");
+    expect(BUILTIN_AGENT_DEFINITIONS.filter(agent=>agent.implementation === "existing").length).toBeGreaterThanOrEqual(10);
   });
   it("adds only safe missing Development and cross-functional agents",()=>{
-    for(const slug of ["issue-hunter","release-readiness","qa-agent","chief-of-staff"]) expect(getAgent(slug)).toMatchObject({implementation:"new",status:"active"});
-    expect(getAgent("pr-reviewer")).toMatchObject({implementation:"scaffold",status:"waiting"});
+    for(const slug of ["issue-hunter","release-readiness","qa-agent","chief-of-staff"]) expect(getAgentDefinition(slug)).toMatchObject({implementation:"new",status:"active"});
+    expect(getAgentDefinition("pr-reviewer")).toMatchObject({implementation:"scaffold",status:"waiting"});
   });
   it("enforces automatic, approval-required, disabled, and prohibited capabilities",()=>{
     for(const action of ["read","analyze","draft"]) expect(canExecuteCapability(classifyAgentAction(action))).toBe(true);

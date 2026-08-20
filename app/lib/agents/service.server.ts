@@ -1,7 +1,8 @@
 import type { AuthenticatedUser } from "../auth.server";
-import { getAgent } from "./catalog";
 import type { AgentApproval, AgentRun } from "./types";
 import { classifyAgentAction } from "./permissions";
+import { getRegisteredAgent } from "./registry.server";
+import { assertAgentControlPlaneAvailable, getAgentControlPlaneStatus } from "./readiness.server";
 
 type AgentEnvironment = { linkedinadam_db: D1Database; DEVOS_AGENT_RUNTIME?: DurableObjectNamespace };
 
@@ -34,7 +35,8 @@ async function deterministicResult(db: D1Database, slug: string) {
 }
 
 export async function runSafeAgent(env: AgentEnvironment, user: AuthenticatedUser, slug: string, input: unknown = {}) {
-  const agent = getAgent(slug);
+  assertAgentControlPlaneAvailable(await getAgentControlPlaneStatus(env.linkedinadam_db));
+  const agent = await getRegisteredAgent(env.linkedinadam_db, slug);
   if (!agent) throw new Error("Agent not found.");
   if (agent.status !== "active" || agent.implementation === "existing") throw new Error(agent.status === "waiting" ? "This agent is waiting for a required connection." : "Use the existing workflow for this automation.");
   const id = crypto.randomUUID();
@@ -90,5 +92,6 @@ export async function agentControlSummary(db: D1Database) {
   const row = await db.prepare(`SELECT COUNT(*) runs_today, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) failed FROM devos_agent_runs WHERE date(created_at)=date('now')`).first<{runs_today:number;failed:number}>();
   const pending = await db.prepare(`SELECT COUNT(*) count FROM devos_agent_approvals WHERE status='pending'`).first<{count:number}>();
   const latest = await db.prepare(`SELECT agent_slug,result_json,created_at FROM devos_agent_runs WHERE status='completed' ORDER BY created_at DESC LIMIT 1`).first<{agent_slug:string;result_json:string;created_at:string}>();
-  return { activeAgents: 0, runsToday:row?.runs_today || 0, failedRuns:row?.failed || 0, pendingApprovals:pending?.count || 0, latest };
+  const active = await db.prepare(`SELECT COUNT(*) count FROM devos_agents WHERE status='active'`).first<{count:number}>();
+  return { activeAgents:active?.count || 0, runsToday:row?.runs_today || 0, failedRuns:row?.failed || 0, pendingApprovals:pending?.count || 0, latest };
 }

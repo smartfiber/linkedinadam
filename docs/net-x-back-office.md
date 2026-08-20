@@ -223,3 +223,34 @@ The model-provider registry anticipates OpenAI, Anthropic, Gemini, and Workers
 AI authentication modes. Only the existing server-only OpenAI integration is
 marked active; it is reused directly by existing content services rather than
 instantiating a parallel client.
+
+### Agent registry ownership
+
+After migration 0017, `devos_agents` is the authoritative source for mutable
+operational fields: name, category, role, purpose, human owner, status,
+autonomy, provider, model, and implementation state. The built-in code catalog
+defines immutable route adapters, tool descriptions, and maximum capabilities;
+a database edit cannot grant executable code or a permission that was not
+shipped in code. Run status and results come from `devos_agent_runs`, events,
+approvals, schedules, and Durable Object control state.
+
+The migration inserts each built-in slug once. DEVOS does not reseed or update
+the registry during Worker startup, so future human configuration is not
+overwritten and duplicate startup rows cannot be created.
+
+### Migration-tolerant release order
+
+Agent-dependent loaders first inspect `sqlite_master` for all six control-plane
+tables. Missing tables produce a specific not-initialized UI; failures of the
+schema check itself are logged and rethrown. This makes the safe production
+sequence:
+
+1. approve and merge the reviewed PR;
+2. allow the automatic Worker deployment to complete;
+3. verify the existing application remains available with agents not initialized;
+4. apply D1 migration 0017;
+5. verify all six tables and built-in records;
+6. reload the Agent Control Center and complete authenticated smoke testing.
+
+Migration 0017 is additive and schedules remain disabled by default. It is not
+applied automatically by a Worker deployment.

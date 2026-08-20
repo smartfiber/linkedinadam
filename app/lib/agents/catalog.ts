@@ -1,6 +1,6 @@
 import type { AgentDefinition } from "./types";
 
-export const AGENT_CATALOG: AgentDefinition[] = [
+export const BUILTIN_AGENT_DEFINITIONS: AgentDefinition[] = [
   { slug:"strategy-agent", name:"Strategy Agent", category:"Content & LinkedIn", role:"Content strategy", purpose:"Builds employee positioning and strategy briefs for gated orchestration.", owner:"Marketing", status:"active", autonomy:"Human-gated", provider:"OpenAI", model:"Existing configured model", capabilities:["READ","ANALYZE","DRAFT"], tools:["Employees","Playbooks","Strategy briefs"], route:"/orchestration", implementation:"existing" },
   { slug:"content-planner", name:"Content Planner", category:"Content & LinkedIn", role:"Weekly planning", purpose:"Builds validated weekly plans and prevents duplicate topics.", owner:"Marketing", status:"active", autonomy:"Human-gated", provider:"OpenAI", model:"Existing configured model", capabilities:["READ","ANALYZE","DRAFT"], tools:["Playbooks","Content plans","Post metrics"], route:"/planner", implementation:"existing" },
   { slug:"post-drafting-agent", name:"Post Drafting Agent", category:"Content & LinkedIn", role:"Employee-aware writer", purpose:"Drafts posts in each employee's approved voice without publishing them.", owner:"Marketing", status:"active", autonomy:"Draft only", provider:"OpenAI", model:"Existing configured model", capabilities:["READ","DRAFT","APPROVAL_REQUIRED"], tools:["Employees","Playbooks","Content drafts"], route:"/#content", implementation:"existing" },
@@ -19,4 +19,4 @@ export const AGENT_CATALOG: AgentDefinition[] = [
   { slug:"chief-of-staff", name:"Chief of Staff", category:"Cross-functional", role:"Operating brief", purpose:"Summarizes Development, content, approvals, agent activity, and priority work.", owner:"Adam", status:"active", autonomy:"Read/analyze", provider:"Deterministic control plane", model:"No model call", capabilities:["READ","ANALYZE"], tools:["Development","Content","Approvals","Agent runs"], implementation:"new" },
 ];
 
-export function getAgent(slug: string) { return AGENT_CATALOG.find((agent) => agent.slug === slug) || null; }
+export function getAgentDefinition(slug: string) { return BUILTIN_AGENT_DEFINITIONS.find((agent) => agent.slug === slug) || null; }

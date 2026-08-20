@@ -1,4 +1,4 @@
-import { NavLink, useLocation } from "react-router";
+import { Link, useLocation } from "react-router";
 import { useEffect, useState, type ReactNode } from "react";
 
 const navigation = [
@@ -13,8 +13,21 @@ const navigation = [
   { to: "/#settings", label: "Settings", icon: "⚙", future: true, end: true },
 ];
 
+const contentRoutes = new Set(["/content-linkedin","/planner","/connections","/calendar","/orchestration","/analytics","/playbooks","/operations"]);
+
+export function isNavigationItemActive(label:string,pathname:string,hash:string) {
+  if (label === "Command Center") return pathname === "/" && !hash;
+  if (label === "Activity") return pathname === "/" && hash === "#activity";
+  if (label === "Settings") return pathname === "/" && hash === "#settings";
+  if (label === "Content & LinkedIn") return contentRoutes.has(pathname) || pathname.startsWith("/content/") || pathname.startsWith("/employees/");
+  if (label === "Development") return pathname === "/development" || pathname.startsWith("/development/");
+  if (label === "Agents") return pathname === "/agents" || pathname.startsWith("/agents/");
+  const item=navigation.find(candidate=>candidate.label === label);
+  return item ? pathname === item.to : false;
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
-  const { pathname } = useLocation();
+  const { pathname,hash } = useLocation();
   const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
@@ -40,9 +53,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         <span aria-hidden="true">{collapsed ? "›" : "‹"}</span>
       </button>
       <nav>
-        {navigation.map((item) => <NavLink key={item.label} to={item.to} end={item.end} title={collapsed ? item.label : undefined} aria-label={item.label} className={({ isActive }) => isActive ? "active" : undefined}>
-          <span className="nav-icon" aria-hidden="true">{item.icon}</span><span className="nav-label">{item.label}</span>{item.future ? <small>SOON</small> : null}
-        </NavLink>)}
+        {navigation.map((item) => { const active=isNavigationItemActive(item.label,pathname,hash); return <Link key={item.label} to={item.to} aria-label={item.label} aria-current={active ? "page" : undefined} className={active ? "active" : undefined}>
+          <span className="nav-icon" aria-hidden="true">{item.icon}</span><span className="nav-label">{item.label}</span>{item.future ? <small>SOON</small> : null}<span className="nav-tooltip" aria-hidden="true">{item.label}</span>
+        </Link>; })}
       </nav>
       <div className="devos-sidebar-foot"><span className="nav-icon" aria-hidden="true">●</span><span className="nav-label">Human-controlled operations</span></div>
     </aside>

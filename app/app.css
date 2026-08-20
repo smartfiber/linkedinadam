@@ -34,6 +34,10 @@ body {
 .nav-collapsed .devos-brand div, .nav-collapsed .nav-label, .nav-collapsed .devos-sidebar nav small { display: none; }
 .nav-collapsed .devos-brand { padding-inline: 4px; }
 .nav-collapsed .devos-sidebar nav a { justify-content: center; padding-inline: 8px; }
+.nav-tooltip { display: none; }
+.nav-collapsed .devos-sidebar nav a { position: relative; overflow: visible; }
+.nav-collapsed .devos-sidebar nav a:hover .nav-tooltip,
+.nav-collapsed .devos-sidebar nav a:focus-visible .nav-tooltip { position: absolute; left: 54px; z-index: 70; display: block; padding: 7px 9px; border: 1px solid #33415d; border-radius: 7px; color: white; background: #17233a; box-shadow: 0 5px 14px rgba(0,0,0,.22); font-size: 11px; font-weight: 700; }
 
 .dashboard {
   min-height: 100vh;
@@ -161,6 +165,7 @@ body {
   .devos-sidebar nav { display: flex; width: 100%; margin: 0; justify-content: space-around; }
   .devos-sidebar nav a, .nav-collapsed .devos-sidebar nav a { min-width: 52px; justify-content: center; padding: 6px; }
   .devos-sidebar .nav-label, .devos-sidebar nav small { display: none; }
+  .nav-tooltip { display: none !important; }
   .content { padding: 24px 14px; }
   .agent-control-grid,.agent-detail-grid,.agent-history-grid { grid-template-columns: 1fr; }
   .agent-summary,.command-agent-metrics { grid-template-columns: repeat(2,1fr); }

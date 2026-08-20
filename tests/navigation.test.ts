@@ -51,6 +51,11 @@ describe("Content & LinkedIn navigation organization", () => {
     expect(appShell).toContain("Expand navigation");
     expect(appShell).toContain('aria-label="Primary navigation"');
     expect(appShell).not.toContain("LinkedInAdam");
+    expect(appShell).toContain("isNavigationItemActive");
+    expect(appShell).toContain("nav-tooltip");
+    expect(appShell).toContain('hash === "#activity"');
+    expect(appShell).toContain('hash === "#settings"');
+    for (const route of ["/planner","/connections","/calendar","/orchestration","/analytics"]) expect(appShell).toContain(`\"${route}\"`);
   });
 
   it("renders Development summary and user attention on the Command Center", () => {
