@@ -1,7 +1,8 @@
-import { Link } from "react-router";
+import { Form, Link } from "react-router";
 import type { Route } from "./+types/development-branch-sync";
 import {
   requireAuthenticatedUser,
+  requireRole,
   type AccessEnvironment,
 } from "../lib/auth.server";
 import {
@@ -20,8 +21,17 @@ import {
 import { statusLabel, statusTone } from "../lib/development/status";
 import { getGitHubSyncStatus } from "../lib/development/repository.server";
 import { phaseTimestamp, syncStatusMessage } from "../lib/development/sync-state";
+import { getDevelopmentRequest } from "../lib/development/repository.server";
+import { generateBatchPrompt, generateImplementationPrompt, type CopilotEnvironment } from "../lib/development/copilot.server";
+import type { BranchEvidence } from "../lib/development/copilot";
 
-type Env = AccessEnvironment & { linkedinadam_db: D1Database };
+type Env = AccessEnvironment & CopilotEnvironment;
+
+function evidence(row: Awaited<ReturnType<typeof listBranchSyncRows>>[number], github: Awaited<ReturnType<typeof getGitHubSyncStatus>>): BranchEvidence {
+  const confidence=[row.adam,row.joe,row.dev,row.main].map(syncConfidence).includes("UNKNOWN") ? "UNKNOWN" : [row.adam,row.joe,row.dev,row.main].map(syncConfidence).includes("PROBABLE") ? "PROBABLE" : "EXACT";
+  const branch=(value:typeof row.adam)=>({sha:value.sha,state:value.comparison === "PATCH_EQUIVALENT" ? "patch_equivalent":value.comparison === "CONFLICT" ? "conflict":value.state,checkedAt:value.checkedAt});
+  return {requestId:row.id,title:row.title,issue:row.issueNumber ? `#${row.issueNumber}`:null,pr:row.prNumber ? `#${row.prNumber}`:null,adam:branch(row.adam),joe:branch(row.joe),dev:branch(row.dev),main:branch(row.main),confidence,ci:row.ci,adamQa:row.adamQa,joeQa:row.joeQa,syncOutcome:github.lastRun?.freshness,deferred:github.lastRun?.result?.comparisons.deferred,generatedAt:new Date().toISOString()};
+}
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as unknown as Env;
@@ -43,6 +53,16 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     view,
     user,
   };
+}
+
+export async function action({request,context}:Route.ActionArgs){
+  const env=context.cloudflare.env as unknown as Env; const user=await requireAuthenticatedUser(request,env); requireRole(user,["OWNER","ADMIN","DEVELOPER"]); const form=await request.formData(); const intent=String(form.get("intent")||"");
+  const [rows,github]=await Promise.all([listBranchSyncRows(env.linkedinadam_db),getGitHubSyncStatus(env.linkedinadam_db)]); const all=rows;
+  try {
+    if(intent==="generate_sync_prompt"){const id=String(form.get("request_id")||"");const row=all.find(item=>item.id===id);if(!row)throw new Error("Branch Sync row not found.");const record=await getDevelopmentRequest(env.linkedinadam_db,id);if(!record)throw new Error("Development Request not found.");await generateImplementationPrompt(env,user,record,String(form.get("target_tool")||"Codex"),"branch_sync",evidence(row,github));return {ok:true,message:"Request-specific Sync Prompt generated and added to the Development Conversation.",requestId:id};}
+    if(intent==="generate_reconciliation_prompt"){let ids=form.getAll("selected_request").map(String);if(String(form.get("scope"))==="visible"&&!ids.length)ids=all.filter(row=>branchSyncGuidance(row,true).promotion!=="Monitor").map(row=>row.id);const result=await generateBatchPrompt(env.linkedinadam_db,user,all.filter(row=>ids.includes(row.id)).map(row=>evidence(row,github)),String(form.get("target_tool")||"Codex"));return {ok:true,message:`Batch reconciliation prompt generated for ${ids.length} requests.`,prompt:result.prompt};}
+  }catch(error){return {error:error instanceof Error?error.message:"Unable to generate remediation prompt."};}
+  return {error:"Unsupported Branch Sync action."};
 }
 
 function olderThan(value: string | null, reference: string | null) {
@@ -86,6 +106,7 @@ const summaryLinks = [
 
 export default function DevelopmentBranchSync({
   loaderData,
+  actionData,
 }: Route.ComponentProps) {
   const joe = loaderData.mappings.find((mapping) => mapping.role === "joe");
   const joeMapped = joe?.status === "MAPPED" && Boolean(joe.branchName);
@@ -196,14 +217,17 @@ export default function DevelopmentBranchSync({
         <span>{loaderData.rows.length} records</span>
       </div>
 
-      <section
+      {actionData?.error?<p className="form-message error" role="alert">{actionData.error}</p>:actionData?.message?<p className="form-message success" role="status">{actionData.message}</p>:null}
+      {actionData?.prompt?<details className="panel current-prompt" open><summary>Generated batch reconciliation prompt</summary><textarea readOnly rows={18} value={actionData.prompt}/><button type="button" onClick={()=>navigator.clipboard.writeText(actionData.prompt)}>Copy Prompt</button></details>:null}
+
+      <Form method="post"><input type="hidden" name="intent" value="generate_reconciliation_prompt"/><input type="hidden" name="scope" value="selected"/><div className="branch-batch-actions"><button>Generate Reconciliation Prompt for selected</button><button name="scope" value="visible">Generate for visible actionable rows</button></div><section
         className="branch-matrix-wrap"
         aria-label="Branch comparison matrix"
       >
         <table className="branch-matrix">
           <thead>
             <tr>
-              <th>Request</th>
+              <th><span className="sr-only">Select</span></th><th>Request</th>
               <th>Issue / PR</th>
               <th>Adam</th>
               <th>Joe</th>
@@ -234,6 +258,7 @@ export default function DevelopmentBranchSync({
                     : "EXACT";
               return (
                 <tr key={row.id}>
+                  <td><input type="checkbox" name="selected_request" value={row.id} aria-label={`Select ${row.title}`}/></td>
                   <td className="branch-request-cell">
                     <Link to={`/development?request=${row.id}`}>
                       {row.title}
@@ -321,6 +346,7 @@ export default function DevelopmentBranchSync({
                   </td>
                   <td className="branch-next-action">
                     <strong>{guidance.action}</strong>
+                    <button form={`sync-prompt-${row.id}`} type="submit">Generate Sync Prompt</button>
                   </td>
                 </tr>
               );
@@ -331,6 +357,8 @@ export default function DevelopmentBranchSync({
           <p className="empty-state">No records match this Branch Sync view.</p>
         ) : null}
       </section>
+      </Form>
+      {loaderData.rows.map(row=><Form method="post" id={`sync-prompt-${row.id}`} key={`prompt-${row.id}`}><input type="hidden" name="intent" value="generate_sync_prompt"/><input type="hidden" name="request_id" value={row.id}/><input type="hidden" name="target_tool" value="Codex"/></Form>)}
     </main>
   );
 }
