@@ -7,6 +7,8 @@ import {
 } from "../lib/auth.server";
 import { runSafeAgent } from "../lib/agents/service.server";
 import { getAgentControlPlaneStatus } from "../lib/agents/readiness.server";
+import { getDevelopmentRequest } from "../lib/development/repository.server";
+import { getCopilotContext } from "../lib/development/copilot.server";
 
 type Env = AccessEnvironment & {
   linkedinadam_db: D1Database;
@@ -27,7 +29,8 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     new URL(request.url).searchParams.get("request") || "";
   const status = await getAgentControlPlaneStatus(env.linkedinadam_db);
   if (status.state === "ERROR") throw status.error;
-  return { safeModes, initialized: status.state === "READY", selectedRequest };
+  const [record,copilot]=selectedRequest ? await Promise.all([getDevelopmentRequest(env.linkedinadam_db,selectedRequest),getCopilotContext(env.linkedinadam_db,selectedRequest)]):[null,null];
+  return { safeModes, initialized: status.state === "READY", selectedRequest, record, copilot };
 }
 export async function action({ context, request }: Route.ActionArgs) {
   const env = context.cloudflare.env as unknown as Env;
@@ -81,6 +84,7 @@ export default function DevelopmentConsole({
           </span>
           <strong>Code execution is disabled</strong>
         </div>
+        {loaderData.record ? <section className="console-request-context"><p className="eyebrow">PERSISTENT REQUEST THREAD</p><h2>{loaderData.record.request.title}</h2><p>{(loaderData.copilot?.state as any)?.layman_summary || loaderData.record.request.problem || "Summary not generated."}</p><dl className="detail-overview"><div><dt>GitHub</dt><dd>{loaderData.record.githubItems.length} linked synchronized objects</dd></div><div><dt>Branches</dt><dd>{loaderData.record.branches.length} observations</dd></div><div><dt>Current prompt</dt><dd>{(loaderData.copilot?.prompts as any[])?.find((p:any)=>p.is_current)?.edited_text || (loaderData.copilot?.prompts as any[])?.find((p:any)=>p.is_current)?.generated_text || "Not generated"}</dd></div></dl><div className="attachment-grid">{(loaderData.copilot?.attachments as any[]||[]).map(a=><img key={a.id} src={`/development/attachments/${a.id}`} alt={a.caption || a.original_filename}/>)}</div><ol className="development-conversation">{(loaderData.copilot?.thread as any[]||[]).map(entry=><li key={entry.id}><strong>{entry.entry_type}</strong><p>{entry.content}</p></li>)}</ol></section>:null}
         {actionData?.error ? (
           <p role="alert" className="form-message error">
             {actionData.error}

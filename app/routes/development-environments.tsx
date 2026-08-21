@@ -17,8 +17,10 @@ import {
 } from "../lib/development/environments";
 import { statusLabel, statusTone } from "../lib/development/status";
 import { getEnvironmentQaReadiness } from "../lib/development/environment-readiness.server";
+import { saveDevelopmentAttachments } from "../lib/development/attachments.server";
+import type { CopilotEnvironment } from "../lib/development/copilot.server";
 
-type Env = AccessEnvironment & { linkedinadam_db: D1Database };
+type Env = AccessEnvironment & CopilotEnvironment;
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as unknown as Env;
@@ -72,6 +74,8 @@ export async function action({ request, context }: Route.ActionArgs) {
       status: String(data.get("status") || ""),
       notes: String(data.get("notes") || ""),
     });
+    const files=data.getAll("attachments").filter((value):value is File=>value instanceof File&&value.size>0);
+    if(files.length){const latest=await env.linkedinadam_db.prepare("SELECT id FROM environment_qa_attempts WHERE development_request_id=? AND environment_id=? AND tester_email=? ORDER BY id DESC LIMIT 1").bind(String(data.get("request_id")||""),Number(data.get("environment_id")),user.email).first<{id:number}>();await saveDevelopmentAttachments(env,user,String(data.get("request_id")||""),files,{category:String(data.get("status"))==="failed"?"QA Failure":"Reference",qaAttemptId:latest?.id});}
     return { ok: true, message: "Environment QA result recorded." };
   } catch (error) {
     return {
@@ -163,7 +167,7 @@ function EnvironmentQaCard({ row }: { row: EnvironmentQaRow }) {
           View QA Instructions
         </Link>
       </div>
-      <Form method="post" className="environment-result-form">
+      <Form method="post" encType="multipart/form-data" className="environment-result-form">
         <input type="hidden" name="request_id" value={row.request_id} />
         <input type="hidden" name="environment_id" value={row.environment_id} />
         <input type="hidden" name="stage" value={row.stage} />
@@ -179,6 +183,7 @@ function EnvironmentQaCard({ row }: { row: EnvironmentQaRow }) {
             )}
           </select>
         </label>
+        <label>QA screenshots<input type="file" name="attachments" accept="image/png,image/jpeg,image/webp" multiple /></label>
         <label>
           Notes
           <input
