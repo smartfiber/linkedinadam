@@ -1,6 +1,7 @@
 import { Form, Link, useNavigation } from "react-router";
 import type { Route } from "./+types/development";
 import { QaHandoffCard } from "../components/QaHandoffCard";
+import { DevelopmentAttachmentPicker } from "../components/DevelopmentAttachmentPicker";
 import {
   type AccessEnvironment,
   requireAuthenticatedUser,
@@ -33,9 +34,11 @@ import { environmentQaForRequest } from "../lib/development/environments.server"
 import { composeEnvironmentTestUrl } from "../lib/development/environments";
 import { getEnvironmentQaReadiness } from "../lib/development/environment-readiness.server";
 import { syncStatusMessage } from "../lib/development/sync-state";
+import { DEVELOPMENT_WORK_STATES, COPILOT_TARGETS, mergeReadiness } from "../lib/development/copilot";
+import { addAndAnalyzeResponse, editPrompt, generateImplementationPrompt, generateSummary, getCopilotContext, hardDeleteRequest, initializeCopilotRequest, listCopilotStates, markPromptSent, setWorkState, type CopilotEnvironment } from "../lib/development/copilot.server";
+import { saveDevelopmentAttachments } from "../lib/development/attachments.server";
 
-type DevelopmentEnvironment = AccessEnvironment &
-  GitHubEnvironment & { linkedinadam_db: D1Database };
+type DevelopmentEnvironment = AccessEnvironment & GitHubEnvironment & CopilotEnvironment;
 
 function environment(
   context: Route.LoaderArgs["context"] | Route.ActionArgs["context"],
@@ -48,6 +51,7 @@ function filtersFromUrl(url: URL): DevelopmentFilters {
   const type = url.searchParams.get("type") || "";
   const status = url.searchParams.get("status") || "";
   return {
+    workState: url.searchParams.get("work_state") || "",
     search: url.searchParams.get("search") || "",
     priority: DEVELOPMENT_PRIORITIES.includes(priority as never)
       ? (priority as DevelopmentFilters["priority"])
@@ -88,6 +92,7 @@ function developmentUrl(
     ["attention", filters.attention],
     ["view", filters.view],
     ["sort", filters.sort],
+    ["work_state", filters.workState],
   ];
   for (const [key, value] of values) if (value) params.set(key, value);
   if (detail) {
@@ -138,6 +143,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const environmentQaReadiness = await getEnvironmentQaReadiness(
     env.linkedinadam_db,
   );
+  const workStateFilter=filters.workState||"";
   if (environmentQaReadiness.state === "ERROR")
     throw environmentQaReadiness.error;
   const [
@@ -148,6 +154,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     detail,
     github,
     environmentQa,
+    copilot,
+    copilotStates,
   ] = await Promise.all([
     getDevelopmentSummary(env.linkedinadam_db),
     listDevelopmentRequests(env.linkedinadam_db, filters),
@@ -158,11 +166,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     requestId && environmentQaReadiness.state === "READY"
       ? environmentQaForRequest(env.linkedinadam_db, requestId)
       : [],
+    requestId ? getCopilotContext(env.linkedinadam_db, requestId) : null,
+    listCopilotStates(env.linkedinadam_db),
   ]);
 
   return {
     summary,
-    requests: requests.results || [],
+    requests: (requests.results || []).filter(item=>{const state=(copilotStates.states as any[]).find((value:any)=>value.development_request_id===item.id)?.work_state || "NEEDS_PROMPT";return workStateFilter ? state===workStateFilter : state!=="ARCHIVED";}),
     attention: attention.results || [],
     activity: activity.results || [],
     detail,
@@ -172,6 +182,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     github,
     environmentQa,
     environmentQaInitialized: environmentQaReadiness.state === "READY",
+    copilot,
+    workStateFilter,
+    workStateCounts: DEVELOPMENT_WORK_STATES.reduce((counts,state)=>({...counts,[state]:(copilotStates.states as any[]).filter((value:any)=>value.work_state===state).length}),{} as Record<string,number>),
     githubConnection: {
       connected: Boolean(
         env.GITHUB_APP_ID &&
@@ -218,7 +231,27 @@ export async function action({ request, context }: Route.ActionArgs) {
       prUrl: String(formData.get("pr_url") || ""),
       branch: String(formData.get("branch") || ""),
     });
+    const initialized = await initializeCopilotRequest(env.linkedinadam_db, id, user);
+    const files = formData.getAll("attachments").filter((value): value is File => value instanceof File && value.size > 0);
+    if (initialized && files.length) await saveDevelopmentAttachments(env, user, id, files, { caption: String(formData.get("attachment_caption") || ""), category: String(formData.get("attachment_category") || "Other") });
     return { ok: true, requestId: id };
+  }
+
+  const requestId = String(formData.get("request_id") || "");
+  if (["generate_summary","generate_prompt","generate_follow_up","add_response","report_failure","set_work_state","edit_prompt","mark_prompt_sent","add_attachments","archive_request","restore_request","hard_delete"].includes(intent)) {
+    const record = await getDevelopmentRequest(env.linkedinadam_db, requestId);
+    if (!record) return { error: "Development Request not found." };
+    try {
+      if (intent === "generate_summary") { const copilot = await getCopilotContext(env.linkedinadam_db, requestId); await generateSummary(env,user,record.request,record.githubItems,copilot.attachments); return {ok:true,message:"Summary and technical interpretation generated."}; }
+      if (intent === "generate_prompt" || intent === "generate_follow_up") { await generateImplementationPrompt(env,user,record,String(formData.get("target_tool")||"Codex"),intent === "generate_follow_up" ? "follow_up" : "implementation"); return {ok:true,message:"A new prompt version was generated."}; }
+      if (intent === "add_response" || intent === "report_failure") { const response=await addAndAnalyzeResponse(env,user,record,String(formData.get("entry_type")||"CODEX"),String(formData.get("content")||""),intent === "report_failure"); const files=formData.getAll("attachments").filter((value):value is File=>value instanceof File&&value.size>0); if(files.length)await saveDevelopmentAttachments(env,user,requestId,files,{category:intent === "report_failure" ? "Error":"Reference",threadEntryId:response.entryId}); return {ok:true,message:intent === "report_failure" ? "Failure analyzed; prior context was preserved." : "Response added and analyzed."}; }
+      if (intent === "set_work_state") { await setWorkState(env.linkedinadam_db,user,requestId,String(formData.get("work_state")||"")); return {ok:true,message:"Work state updated."}; }
+      if (intent === "archive_request" || intent === "restore_request") { await setWorkState(env.linkedinadam_db,user,requestId,intent === "archive_request" ? "ARCHIVED":"NEEDS_PROMPT"); return {ok:true,message:intent === "archive_request" ? "Request archived; history and attachments were preserved.":"Request restored."}; }
+      if (intent === "edit_prompt") { await editPrompt(env.linkedinadam_db,user,String(formData.get("prompt_id")||""),String(formData.get("prompt_text")||"")); return {ok:true,message:"Prompt edit saved without replacing prior versions."}; }
+      if (intent === "mark_prompt_sent") { await markPromptSent(env.linkedinadam_db,user,String(formData.get("prompt_id")||"")); return {ok:true,message:"Prompt marked sent."}; }
+      if (intent === "add_attachments") { const files=formData.getAll("attachments").filter((value):value is File=>value instanceof File&&value.size>0); await saveDevelopmentAttachments(env,user,requestId,files,{caption:String(formData.get("attachment_caption")||""),category:String(formData.get("attachment_category")||"Other")}); return {ok:true,message:"Screenshots added."}; }
+      if (intent === "hard_delete") { await hardDeleteRequest(env,user,requestId,String(formData.get("delete_reason")||""),String(formData.get("delete_confirmation")||"")); return {ok:true,message:"Request permanently deleted."}; }
+    } catch(error) { return {error:error instanceof Error ? error.message : "Development Copilot action failed."}; }
   }
 
   if (intent === "update_request") {
@@ -368,6 +401,9 @@ export default function Development({
     githubConnection,
     environmentQa,
     environmentQaInitialized,
+    copilot,
+    workStateFilter,
+    workStateCounts,
   } = loaderData;
   const developmentListUrl = developmentUrl(filters);
   const githubIssue = detail?.githubItems.find((item) => item.kind === "issue");
@@ -381,6 +417,11 @@ export default function Development({
   const pullRequestLink = detail?.links.find(
     (link: any) => link.type === "pull_request",
   );
+  const copilotState = copilot?.state as any;
+  const currentPrompt = (copilot?.prompts as any[] | undefined)?.find((prompt:any)=>prompt.is_current);
+  let branchPromptChanged=false;
+  if(currentPrompt?.evidence_snapshot_json&&detail){try{const snapshot=JSON.parse(currentPrompt.evidence_snapshot_json);branchPromptChanged=(["adam","joe","dev","main"] as const).some(branch=>{const current=(detail.branches as any[]).find(item=>item.branch===branch);return snapshot[branch]?.sha!==(current?.commit_sha||null)||snapshot[branch]?.checkedAt!==(current?.checked_at||null);});}catch{branchPromptChanged=true;}}
+  const readiness = detail ? mergeReadiness({ci:ciFromPayload(pullRequestPayload),mergeable:pullRequestPayload?.mergeable,conflict:detail.branches.some((branch:any)=>branch.state==="conflict"),stale:detail.branches.some((branch:any)=>!branch.checked_at),adamQa:(detail.qa as any[]).find((q:any)=>q.stage==="ADAM_QA")?.status,joeQa:(detail.qa as any[]).find((q:any)=>q.stage==="JOE_QA")?.status,devQa:(detail.qa as any[]).find((q:any)=>q.stage==="DEV_QA")?.status,mainVerification:(detail.qa as any[]).find((q:any)=>q.stage==="MAIN_VERIFICATION")?.status,approvals:detail.approvals.length}) : null;
 
   return (
     <main className="development-page">
@@ -688,6 +729,17 @@ export default function Development({
             </select>
           </label>
           <label>
+            <span>Copilot queue</span>
+            <select name="work_state" defaultValue={workStateFilter}>
+              <option value="">Active queues</option>
+              {DEVELOPMENT_WORK_STATES.map((state) => (
+                <option key={state} value={state}>
+                  {state.replaceAll("_", " ")} ({workStateCounts[state] || 0})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
             <span>Priority</span>
             <select name="priority" defaultValue={filters.priority}>
               <option value="">All</option>
@@ -887,12 +939,17 @@ export default function Development({
               <h2>New request</h2>
             </div>
           </div>
-          <Form method="post" className="development-form">
+          <Form method="post" encType="multipart/form-data" className="development-form quick-request-form">
             <input type="hidden" name="intent" value="create_request" />
             <label>
-              Title
-              <input required name="title" placeholder="Short request title" />
+              Request / Idea
+              <textarea required name="title" rows={5} placeholder="Describe the idea or bug in your own words…" />
             </label>
+            <fieldset className="attachment-composer">
+              <legend>Screenshots / Attachments</legend>
+              <DevelopmentAttachmentPicker />
+              <div className="form-grid"><label>Category<select name="attachment_category" defaultValue="Other">{["Current Behavior","Desired Behavior","Error","Reference","Other"].map(value=><option key={value}>{value}</option>)}</select></label><label>Caption<input name="attachment_caption" /></label></div>
+            </fieldset>
             <div className="form-grid">
               <label>
                 Priority
@@ -929,10 +986,7 @@ export default function Development({
               Product area
               <input name="product_area" />
             </label>
-            <label>
-              Problem
-              <textarea name="problem" rows={3} />
-            </label>
+            <label>Optional problem detail<textarea name="problem" rows={3} /></label>
             <label>
               Why / Decision
               <textarea name="why_decision" rows={3} />
@@ -955,6 +1009,7 @@ export default function Development({
               Notes
               <textarea name="notes" rows={2} />
             </label>
+            <p><strong>Default work state:</strong> Needs Prompt</p>
             <button disabled={busy}>
               {busy ? "Saving…" : "Create request"}
             </button>
@@ -1059,6 +1114,28 @@ export default function Development({
           <div className="request-detail-body">
             {detailTab === "overview" ? (
               <>
+                {!copilot?.initialized ? <section className="copilot-uninitialized"><h3>Development Copilot not initialized</h3><p>Existing Development and GitHub workflows remain available until migration 0021 is applied.</p></section> : (
+                  <section className="development-copilot" aria-label="Development Copilot">
+                    <div className="panel-heading"><div><p className="eyebrow">READ + ANALYZE + DRAFT</p><h3>Development Copilot</h3></div><span className="development-status attention">{String(copilotState?.work_state || "NEEDS_PROMPT").replaceAll("_"," ")}</span></div>
+                    <Form method="post" className="copilot-state-form"><input type="hidden" name="intent" value="set_work_state"/><input type="hidden" name="request_id" value={detail.request.id}/><label>Work state<select name="work_state" defaultValue={copilotState?.work_state || "NEEDS_PROMPT"}>{DEVELOPMENT_WORK_STATES.map(state=><option key={state} value={state}>{state.replaceAll("_"," ")}</option>)}</select></label><button>Update</button></Form>
+                    <div className="copilot-summary-grid">
+                      <article><h4>What Are We Trying to Do?</h4><p>{copilotState?.layman_summary || "Generate a summary from the human request and current evidence."}</p></article>
+                      <article><h4>Technical Interpretation</h4><p>{copilotState?.technical_interpretation || "Not generated."}</p></article>
+                      <article><h4>Current State</h4><p>{copilotState?.current_state_summary || "Needs Prompt"}</p></article>
+                      <article><h4>Suggested Next Step</h4><p>{copilotState?.suggested_next_step || "Generate Summary & Prompt"}</p></article>
+                    </div>
+                    <Form method="post" className="copilot-actions"><input type="hidden" name="intent" value="generate_summary"/><input type="hidden" name="request_id" value={detail.request.id}/><button>Generate Summary &amp; Prompt Context</button></Form>
+                    <Form method="post" className="copilot-actions"><input type="hidden" name="intent" value="generate_prompt"/><input type="hidden" name="request_id" value={detail.request.id}/><label>Target tool<select name="target_tool">{COPILOT_TARGETS.map(target=><option key={target}>{target}</option>)}</select></label><button>Generate Prompt</button></Form>
+                    {branchPromptChanged ? <p className="form-message error">Branch state changed since this prompt was generated. Regenerate with current branch state.</p> : null}
+                    {currentPrompt ? <article className="current-prompt"><h4>Current Prompt · Version {currentPrompt.version}</h4><Form method="post"><input type="hidden" name="intent" value="edit_prompt"/><input type="hidden" name="request_id" value={detail.request.id}/><input type="hidden" name="prompt_id" value={currentPrompt.id}/><textarea name="prompt_text" rows={14} defaultValue={currentPrompt.edited_text || currentPrompt.generated_text}/><div className="copilot-actions"><button>Save Edit</button><button type="button" onClick={(event)=>navigator.clipboard.writeText((event.currentTarget.closest("form")?.elements.namedItem("prompt_text") as HTMLTextAreaElement).value)}>Copy Prompt</button></div></Form><Form method="post"><input type="hidden" name="intent" value="mark_prompt_sent"/><input type="hidden" name="request_id" value={detail.request.id}/><input type="hidden" name="prompt_id" value={currentPrompt.id}/><button>Mark Sent</button></Form></article>:null}
+                    <details><summary>Add Response</summary><Form method="post" encType="multipart/form-data"><input type="hidden" name="intent" value="add_response"/><input type="hidden" name="request_id" value={detail.request.id}/><label>Source<select name="entry_type">{["CODEX","CLAUDE","CHATGPT","GEMINI"].map(type=><option key={type}>{type}</option>)}</select></label><label>Response<textarea required name="content" rows={10}/></label><input type="file" name="attachments" accept="image/png,image/jpeg,image/webp" multiple/><button>Add &amp; Analyze Response</button></Form></details>
+                    <details><summary>Report Failure</summary><Form method="post" encType="multipart/form-data"><input type="hidden" name="intent" value="report_failure"/><input type="hidden" name="request_id" value={detail.request.id}/><label>Source<select name="entry_type">{["CODEX","CLAUDE","CHATGPT","GEMINI"].map(type=><option key={type}>{type}</option>)}</select></label><label>Logs / failure details<textarea required name="content" rows={10}/></label><input type="file" name="attachments" accept="image/png,image/jpeg,image/webp" multiple/><button>Analyze Failure</button></Form><Form method="post"><input type="hidden" name="intent" value="generate_follow_up"/><input type="hidden" name="request_id" value={detail.request.id}/><button>Generate Follow-up Prompt</button></Form></details>
+                    <section className="merge-readiness"><h4>Merge Readiness</h4><div><strong>{readiness?.level} · {readiness?.overall}/100</strong><span>Technical {readiness?.technical}/100</span><span>Workflow {readiness?.workflow}/100</span></div><p>{readiness?.explanation}</p>{readiness?.blockers.length ? <p className="form-message error">Hard blockers: {readiness.blockers.join(", ")}</p>:null}<small>Operational readiness score, not a probability.</small></section>
+                    <section><h4>Screenshots</h4><div className="attachment-grid">{(copilot.attachments as any[]).map(a=><figure key={a.id}><a href={`/development/attachments/${a.id}`} target="_blank" rel="noreferrer"><img src={`/development/attachments/${a.id}`} alt={a.caption || a.original_filename}/></a><figcaption>{a.category} · {a.caption || a.original_filename}</figcaption></figure>)}</div><Form method="post" encType="multipart/form-data"><input type="hidden" name="intent" value="add_attachments"/><input type="hidden" name="request_id" value={detail.request.id}/><input required type="file" name="attachments" accept="image/png,image/jpeg,image/webp" multiple/><input name="attachment_caption" placeholder="Optional caption"/><button>Add screenshots</button></Form></section>
+                    <section><h4>Development Conversation</h4><ol className="development-conversation">{(copilot.thread as any[]).map(entry=><li key={entry.id}><strong>{entry.entry_type}</strong><time>{entry.created_at}</time><p>{entry.content}</p></li>)}</ol></section>
+                    <div className="archive-actions"><Form method="post"><input type="hidden" name="intent" value={copilotState?.work_state === "ARCHIVED" ? "restore_request":"archive_request"}/><input type="hidden" name="request_id" value={detail.request.id}/><button>{copilotState?.work_state === "ARCHIVED" ? "Restore":"Archive"}</button></Form>{user.role === "OWNER" ? <details><summary>Permanent delete</summary><Form method="post"><input type="hidden" name="intent" value="hard_delete"/><input type="hidden" name="request_id" value={detail.request.id}/><label>Reason<select name="delete_reason"><option>accidental entry</option><option>duplicate</option><option>test</option><option>junk</option></select></label><label>Type DELETE {detail.request.id}<input name="delete_confirmation"/></label><button className="danger">Permanently delete</button></Form></details>:null}</div>
+                  </section>
+                )}
                 <section className="detail-overview">
                   <h3>Overview</h3>
                   <dl>
