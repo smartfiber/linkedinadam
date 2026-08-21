@@ -10,6 +10,7 @@ export default [
   route("development/branch-sync", "routes/development-branch-sync.tsx"),
   route("development/environments", "routes/development-environments.tsx"),
   route("development/console", "routes/development-console.tsx"),
+  route("development/attachments/:attachmentId", "routes/development-attachment.ts"),
   route("agents", "routes/agents.tsx"),
   route("agents/:agentSlug", "routes/agent-detail.tsx"),
   route("content-linkedin", "routes/content-linkedin.tsx"),

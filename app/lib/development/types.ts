@@ -101,6 +101,7 @@ export type DevelopmentSummary = {
 };
 
 export type DevelopmentFilters = {
+  workState?: string;
   search?: string;
   priority?: DevelopmentPriority | "";
   type?: DevelopmentType | "";
