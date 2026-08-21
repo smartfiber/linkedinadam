@@ -19,6 +19,7 @@ import {
 } from "../lib/development/branch-sync";
 import { statusLabel, statusTone } from "../lib/development/status";
 import { getGitHubSyncStatus } from "../lib/development/repository.server";
+import { phaseTimestamp, syncStatusMessage } from "../lib/development/sync-state";
 
 type Env = AccessEnvironment & { linkedinadam_db: D1Database };
 
@@ -44,7 +45,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   };
 }
 
-function BranchState({ value }: { value: BranchSyncState }) {
+function olderThan(value: string | null, reference: string | null) {
+  if (!value || !reference) return false;
+  const parse = (timestamp: string) => Date.parse(timestamp.includes("T") ? timestamp : `${timestamp.replace(" ", "T")}Z`);
+  return parse(value) < parse(reference);
+}
+
+function BranchState({ value, referenceAt }: { value: BranchSyncState; referenceAt: string | null }) {
   const label = displayBranchState(value);
   const tone =
     label === "Exact" || label === "Present" || label === "Patch Equivalent"
@@ -61,6 +68,7 @@ function BranchState({ value }: { value: BranchSyncState }) {
       {syncConfidence(value) !== "UNKNOWN" ? (
         <small>{syncConfidence(value).replaceAll("_", " ")}</small>
       ) : null}
+      {!value.checkedAt ? <small>Data missing</small> : olderThan(value.checkedAt, referenceAt) ? <small>Last-known · stale</small> : <small>Refreshed</small>}
     </span>
   );
 }
@@ -81,6 +89,8 @@ export default function DevelopmentBranchSync({
 }: Route.ComponentProps) {
   const joe = loaderData.mappings.find((mapping) => mapping.role === "joe");
   const joeMapped = joe?.status === "MAPPED" && Boolean(joe.branchName);
+  const result = loaderData.github.lastRun?.result;
+  const coreAt = phaseTimestamp(result || null, ["coreSync"]) || loaderData.github.lastRun?.finished_at || null;
   return (
     <main className="development-page branch-sync-page">
       <header className="development-header">
@@ -112,15 +122,11 @@ export default function DevelopmentBranchSync({
       </nav>
 
       <section
-        className={`branch-sync-health ${loaderData.github.lastRun?.status === "failed" ? "failed" : ""}`}
+        className={`branch-sync-health ${loaderData.github.lastRun?.freshness === "FAILED" ? "failed" : ""}`}
         role="status"
       >
         <strong>
-          {loaderData.github.lastRun?.status === "failed"
-            ? "GitHub sync failed — showing last known branch observations"
-            : loaderData.github.lastRun
-              ? `Last GitHub sync: ${loaderData.github.lastRun.status}`
-              : "No GitHub sync run recorded"}
+          {loaderData.github.lastRun ? syncStatusMessage(loaderData.github.lastRun.status, result || null) : "No GitHub sync run recorded"}
         </strong>
         <span>
           {loaderData.github.lastRun?.finished_at ||
@@ -128,6 +134,19 @@ export default function DevelopmentBranchSync({
             "Branch timestamps remain visible per row"}
         </span>
       </section>
+
+      {loaderData.github.lastRun ? (
+        <section className="panel" aria-label="GitHub freshness by phase">
+          <div className="panel-heading"><div><p className="eyebrow">SYNC FRESHNESS</p><h2>{loaderData.github.lastRun.freshness.replaceAll("_", " ")}</h2></div></div>
+          <dl className="detail-overview">
+            <div><dt>Core GitHub</dt><dd>{result ? `${result.coreSync.status} · ${result.coreSync.completed_at || "not completed"}` : "Legacy run · granular data unavailable"}</dd></div>
+            <div><dt>PR details / reviews / CI</dt><dd>{result ? `${result.prDetails.status} / ${result.reviews.status} / ${result.ci.status} · ${result.ci.completed_at || "not completed"}` : "Granular data unavailable"}</dd></div>
+            <div><dt>Branch observations</dt><dd>{result ? `${result.branches.status} · ${result.branches.completed_at || "not completed"}` : "Last-known timestamps remain visible"}</dd></div>
+            <div><dt>Comparisons / patch equivalence</dt><dd>{result ? `${result.comparisons.status} · ${result.comparisons.processed} processed · ${result.comparisons.deferred} deferred` : "Granular data unavailable"}</dd></div>
+          </dl>
+          <p><small>Missing data has never been observed. Last-known data remains visible but is marked stale when it predates the current core refresh.</small></p>
+        </section>
+      ) : null}
 
       {!joeMapped ? (
         <section className="panel branch-mapping-warning" role="status">
@@ -267,16 +286,16 @@ export default function DevelopmentBranchSync({
                     ) : null}
                   </td>
                   <td>
-                    <BranchState value={row.adam} />
+                    <BranchState value={row.adam} referenceAt={coreAt} />
                   </td>
                   <td>
-                    <BranchState value={row.joe} />
+                    <BranchState value={row.joe} referenceAt={coreAt} />
                   </td>
                   <td>
-                    <BranchState value={row.dev} />
+                    <BranchState value={row.dev} referenceAt={coreAt} />
                   </td>
                   <td>
-                    <BranchState value={row.main} />
+                    <BranchState value={row.main} referenceAt={coreAt} />
                   </td>
                   <td>
                     <span

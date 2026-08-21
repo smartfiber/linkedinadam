@@ -1,4 +1,5 @@
 import type { AuthenticatedUser } from "../auth.server";
+import type { GitHubGranularSyncResult, GitHubSyncFreshness } from "./sync-state";
 
 export const DEVELOPMENT_PRIORITIES = ["P0", "P1", "P2", "P3"] as const;
 export type DevelopmentPriority = (typeof DEVELOPMENT_PRIORITIES)[number];
@@ -199,11 +200,14 @@ export type GitHubSyncStatus = {
     skipped_count: number;
     conflict_count: number;
     error_message: string | null;
+    result: GitHubGranularSyncResult | null;
+    freshness: GitHubSyncFreshness;
   } | null;
   branches: {
     role: string;
     branch_name: string | null;
     status: string;
     sha: string | null;
+    checked_at: string;
   }[];
 };

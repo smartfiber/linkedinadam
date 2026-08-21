@@ -14,6 +14,7 @@ import {
   SCHEDULED_PR_BATCH_SIZE,
 } from "../integrations/github.server";
 import { insertActivity } from "./repository.server";
+import { emptyGranularSyncResult, type GitHubGranularSyncResult, type SyncPhaseResult } from "./sync-state";
 
 type SyncDatabase = D1Database;
 
@@ -166,9 +167,47 @@ function safeSyncError(error: unknown) {
 function safeSyncDiagnostic(error: unknown) {
   const stage = error instanceof GitHubSyncStageError ? error.stage : "unknown";
   const original = error instanceof GitHubSyncStageError ? error.originalError : error;
-  if (original instanceof GitHubAPIError) return { stage, category: "github_api", endpoint: original.endpoint, httpStatus: original.status, requestId: original.requestId, rateLimitRemaining: original.rateLimitRemaining, retryAfter: original.retryAfter, message: original.message.slice(0, 500) };
+  if (original instanceof GitHubAPIError) return { stage, category: original.status === 429 || original.rateLimitRemaining === 0 ? "rate_limit" : original.status === 401 || original.status === 403 ? "authentication" : "github_api", endpoint: original.endpoint, httpStatus: original.status, requestId: original.requestId, rateLimitRemaining: original.rateLimitRemaining, retryAfter: original.retryAfter, message: original.message.slice(0, 500) };
   const message = original instanceof Error ? original.message : "Unknown runtime failure.";
-  return { stage, category: /subrequest/i.test(message) ? "worker_subrequest_limit" : "runtime", endpoint: null, httpStatus: null, requestId: null, message: message.slice(0, 500) };
+  const category = /subrequest/i.test(message) ? "worker_subrequest_limit" : /installation token|not configured|private key|PKCS/i.test(message) ? "authentication" : "runtime";
+  return { stage, category, endpoint: null, httpStatus: null, requestId: null, message: message.slice(0, 500) };
+}
+
+function completePhase(phase: SyncPhaseResult, processed: number, deferred = 0) {
+  Object.assign(phase, { status: deferred ? "PARTIAL" : "SUCCESS", processed, deferred, completed_at: new Date().toISOString() });
+}
+
+function failPhase(phase: SyncPhaseResult, message: string, usefulProgress: boolean) {
+  phase.status = usefulProgress && phase.processed > 0 ? "PARTIAL" : "FAILED";
+  phase.error = message;
+  phase.completed_at = new Date().toISOString();
+}
+
+function missingGranularResultSchema(error: unknown) {
+  return error instanceof Error && /(?:no such column:?|has no column named)\s+(?:r\.)?(?:outcome|result_json)/i.test(error.message);
+}
+
+async function completeRun(db: SyncDatabase, input: { runId: number; outcome: "succeeded" | "partial" | "failed"; issues: number; pullRequests: number; created: number; matched: number; ambiguous: number; error: string | null; result: GitHubGranularSyncResult }) {
+  const legacyStatus = input.outcome === "succeeded" ? "succeeded" : "failed";
+  try {
+    await db.prepare(`UPDATE github_sync_runs SET status = '${legacyStatus}', outcome = ?, issues_seen = ?, pull_requests_seen = ?, created_count = ?, matched_count = ?, ambiguous_count = ?, error_message = ?, result_json = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .bind(input.outcome, input.issues, input.pullRequests, input.created, input.matched, input.ambiguous, input.error, JSON.stringify(input.result), input.runId).run();
+  } catch (error) {
+    if (!missingGranularResultSchema(error)) throw error;
+    await db.prepare(`UPDATE github_sync_runs SET status = '${legacyStatus}', issues_seen = ?, pull_requests_seen = ?, created_count = ?, matched_count = ?, ambiguous_count = ?, error_message = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .bind(input.issues, input.pullRequests, input.created, input.matched, input.ambiguous, input.error, input.runId).run();
+  }
+}
+
+async function loadComparisonCursor(db: SyncDatabase, batchKey: string) {
+  try {
+    const row = await db.prepare("SELECT result_json FROM github_sync_runs WHERE outcome = 'partial' AND result_json IS NOT NULL ORDER BY id DESC LIMIT 1").first<{ result_json: string | null }>();
+    const result = row?.result_json ? JSON.parse(row.result_json) as Partial<GitHubGranularSyncResult> : null;
+    return result?.comparisonBatchKey === batchKey && Number.isInteger(result.comparisonCursor) ? Math.max(0, result.comparisonCursor || 0) : 0;
+  } catch (error) {
+    if (missingGranularResultSchema(error)) return 0;
+    throw error;
+  }
 }
 
 export async function syncNetXRepository(db: SyncDatabase, env: GitHubEnvironment, options: GitHubSyncOptions = {}) {
@@ -176,6 +215,9 @@ export async function syncNetXRepository(db: SyncDatabase, env: GitHubEnvironmen
   if (configError) return { status: "skipped" as const, error: configError, issues: 0, pullRequests: 0, created: 0, matched: 0, ambiguous: 0 };
   const trigger = options.trigger || "scheduled";
   const initiator = options.initiator || "system";
+  const phases = emptyGranularSyncResult();
+  let issuesSeen = 0; let pullRequestsSeen = 0; let created = 0; let matched = 0; let ambiguous = 0;
+  let comparisonTotal = 0; let comparisonStart = 0;
   const run = await db.prepare("INSERT INTO github_sync_runs (status) SELECT 'running' WHERE NOT EXISTS (SELECT 1 FROM github_sync_runs WHERE status = 'running') RETURNING id").first<{ id: number }>();
   if (!run) return { status: "rejected" as const, error: "GitHub sync already in progress", issues: 0, pullRequests: 0, created: 0, matched: 0, ambiguous: 0 };
   await db.prepare("INSERT INTO development_activity_events (actor_type, actor_identity, event_type, source, summary, metadata_json) VALUES (?, ?, 'github_sync_started', 'github', ?, ?)")
@@ -189,9 +231,17 @@ export async function syncNetXRepository(db: SyncDatabase, env: GitHubEnvironmen
     const pullRequestBatch = trigger === "scheduled" && adapter.listScheduledPullRequests
       ? await atStage("pull_requests", () => adapter.listScheduledPullRequests!(scheduledCursor!, trackedPullRequestNumbers))
       : { items: await atStage("pull_requests", () => adapter.listPullRequests()), nextCursor: scheduledCursor || initialPullRequestCursor(), cycleComplete: trigger !== "scheduled" };
+    pullRequestsSeen = pullRequestBatch.items.length;
+    completePhase(phases.prs, pullRequestsSeen, trigger === "scheduled" && !pullRequestBatch.cycleComplete ? SCHEDULED_PR_BATCH_SIZE : 0);
+    completePhase(phases.prDetails, pullRequestsSeen, phases.prs.deferred);
+    completePhase(phases.reviews, pullRequestsSeen, phases.prs.deferred);
+    completePhase(phases.ci, pullRequestsSeen, phases.prs.deferred);
     const [issues, branches] = await Promise.all([atStage("issues", () => adapter.listIssues()), atStage("branches", () => adapter.listBranches())]);
+    issuesSeen = issues.length;
+    completePhase(phases.authentication, 1);
+    completePhase(phases.repository, 1);
+    completePhase(phases.issues, issuesSeen);
     const pullRequests = pullRequestBatch.items;
-    let created = 0; let matched = 0; let ambiguous = 0;
     for (const issue of issues) {
       const reconciledId = await reconcileExistingRequest(db, "issue", issue.number, issue.htmlUrl);
       const request = reconciledId ? { id: reconciledId, created: false } : await ensureRequest(db, { kind: "issue", providerId: issue.id, number: issue.number, title: issue.title, body: issue.body, author: issue.author, priority: priorityForIssue(issue), type: typeForIssue(issue), nextAction: nextActionForIssue(issue) });
@@ -220,33 +270,72 @@ export async function syncNetXRepository(db: SyncDatabase, env: GitHubEnvironmen
       await db.prepare("UPDATE development_requests SET next_action = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND requested_by_type = 'github'").bind(nextActionForPullRequest(pr), request.id).run();
       if (item.changed || item.isNew) await db.batch([insertActivity(db, { actorType: "SYSTEM", actorIdentity: "github-sync", eventType: item.isNew ? "github_pr_discovered" : "github_pr_updated", requestId: request.id, source: "github", summary: `GitHub PR #${pr.number} ${pr.merged ? "merged" : "updated"}.`, metadata: { number: pr.number, url: pr.htmlUrl, targetBranch: pr.targetBranch, headSha: pr.headSha, nextAction: nextActionForPullRequest(pr) } })]);
     }
+    completePhase(phases.reconciliation, issues.length + pullRequests.length);
+    completePhase(phases.coreSync, issues.length + pullRequests.length);
     const mappings = discoverBranchMappings(branches);
+    completePhase(phases.branchDiscovery, branches.length);
     for (const mapping of mappings) {
       const branch = mapping.branchName ? branches.find(value => value.name === mapping.branchName) : null;
       await db.prepare("INSERT INTO github_branch_mappings (role, branch_name, status, candidates_json, sha, checked_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(role) DO UPDATE SET branch_name = excluded.branch_name, status = excluded.status, candidates_json = excluded.candidates_json, sha = excluded.sha, checked_at = CURRENT_TIMESTAMP").bind(mapping.role, mapping.branchName, mapping.status, JSON.stringify(mapping.candidates), branch?.sha || null).run();
     }
+    completePhase(phases.branches, mappings.length);
+    const comparisonJobs: Array<{ pr: GitHubPullRequestSnapshot; mapping: BranchMapping; requestIds: Set<string> }> = [];
     for (const pr of pullRequests) {
       const item = await db.prepare("SELECT development_request_id FROM github_sync_items WHERE kind = 'pull_request' AND provider_id = ?").bind(pr.id).first<{ development_request_id: string | null }>();
       if (!item?.development_request_id) continue;
       const related = await db.prepare("SELECT DISTINCT development_request_id FROM development_links WHERE provider = 'github' AND type = 'pull_request' AND external_id = ?").bind(String(pr.number)).all<{ development_request_id: string }>();
       const requestIds = new Set([item.development_request_id, ...(related.results || []).map(value => value.development_request_id)]);
-      for (const mapping of mappings) {
-        const branch = mapping.branchName ? branches.find(value => value.name === mapping.branchName) : null;
-        const result = branch ? await computeBranchState(pr, branch, adapter.compare) : { state: "unknown" as const, relationship: "UNKNOWN", confidence: "UNKNOWN", checkedSha: null };
-        for (const requestId of requestIds) {
-          await db.prepare("INSERT INTO development_branch_states (development_request_id, branch, state, commit_sha, comparison_state, confidence, equivalence_notes, checked_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(development_request_id, branch) DO UPDATE SET state = excluded.state, commit_sha = excluded.commit_sha, comparison_state = excluded.comparison_state, confidence = excluded.confidence, equivalence_notes = excluded.equivalence_notes, checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP").bind(requestId, mapping.role, result.state, result.checkedSha, result.relationship, result.confidence, result.relationship === "PATCH_EQUIVALENT" ? "Normalized patches match exactly." : "Computed from GitHub commit ancestry and conservative patch comparison.").run();
-        }
-      }
+      for (const mapping of mappings) comparisonJobs.push({ pr, mapping, requestIds });
     }
-    await db.prepare("UPDATE github_sync_runs SET status = 'succeeded', issues_seen = ?, pull_requests_seen = ?, created_count = ?, matched_count = ?, ambiguous_count = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?").bind(issues.length, pullRequests.length, created, matched, ambiguous, run?.id || 0).run();
+    comparisonTotal = comparisonJobs.length;
+    phases.comparisonBatchKey = comparisonJobs.map(job => `${job.pr.id}:${job.mapping.role}`).join("|");
+    comparisonStart = comparisonTotal ? (await loadComparisonCursor(db, phases.comparisonBatchKey)) % comparisonTotal : 0;
+    const orderedJobs = comparisonJobs.length ? [...comparisonJobs.slice(comparisonStart), ...comparisonJobs.slice(0, comparisonStart)] : [];
+    for (const job of orderedJobs) {
+      const branch = job.mapping.branchName ? branches.find(value => value.name === job.mapping.branchName) : null;
+      const result = branch ? await atStage("comparisons", () => computeBranchState(job.pr, branch, adapter.compare)) : { state: "unknown" as const, relationship: "UNKNOWN", confidence: "UNKNOWN", checkedSha: null };
+      for (const requestId of job.requestIds) {
+        await db.prepare("INSERT INTO development_branch_states (development_request_id, branch, state, commit_sha, comparison_state, confidence, equivalence_notes, checked_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(development_request_id, branch) DO UPDATE SET state = excluded.state, commit_sha = excluded.commit_sha, comparison_state = excluded.comparison_state, confidence = excluded.confidence, equivalence_notes = excluded.equivalence_notes, checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP").bind(requestId, job.mapping.role, result.state, result.checkedSha, result.relationship, result.confidence, result.relationship === "PATCH_EQUIVALENT" ? "Normalized patches match exactly." : "Computed from GitHub commit ancestry and conservative patch comparison.").run();
+      }
+      phases.comparisons.processed += 1;
+      phases.ancestry.processed += 1;
+      phases.patchEquivalence.processed += 1;
+    }
+    completePhase(phases.comparisons, comparisonTotal);
+    completePhase(phases.ancestry, comparisonTotal);
+    completePhase(phases.patchEquivalence, comparisonTotal);
+    phases.comparisonCursor = 0;
+    await completeRun(db, { runId: run.id, outcome: "succeeded", issues: issues.length, pullRequests: pullRequests.length, created, matched, ambiguous, error: null, result: phases });
     await db.prepare("INSERT INTO development_activity_events (actor_type, actor_identity, event_type, source, summary, metadata_json) VALUES (?, ?, 'github_sync_completed', 'github', ?, ?)")
       .bind(trigger === "manual_readiness" ? "HUMAN" : "SYSTEM", initiator, `GitHub ${trigger === "manual_readiness" ? "readiness " : ""}sync completed.`, JSON.stringify({ syncRunId: run.id, trigger, ...(trigger === "scheduled" ? { nextScheduledCursor: pullRequestBatch.nextCursor, cycleComplete: pullRequestBatch.cycleComplete } : {}) })).run();
-    return { status: "succeeded" as const, runId: run.id, issues: issues.length, pullRequests: pullRequests.length, branches: branches.length, created, matched, ambiguous, skipped: 0, conflicts: 0 };
+    return { status: "succeeded" as const, runId: run.id, issues: issues.length, pullRequests: pullRequests.length, branches: branches.length, created, matched, ambiguous, skipped: 0, conflicts: 0, result: phases };
   } catch (error) {
     const message = safeSyncError(error);
-    await db.prepare("UPDATE github_sync_runs SET status = 'failed', error_message = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?").bind(message, run?.id || 0).run();
+    const diagnostic = safeSyncDiagnostic(error);
+    const usefulProgress = phases.reconciliation.status === "SUCCESS";
+    phases.errorStage = diagnostic.stage;
+    phases.errorCategory = diagnostic.category;
+    const phase = diagnostic.category === "authentication" ? phases.authentication : diagnostic.stage === "issues" ? phases.issues : diagnostic.stage === "pull_requests" ? phases.prs : diagnostic.stage === "branches" ? phases.branchDiscovery : diagnostic.stage === "comparisons" ? phases.comparisons : phases.coreSync;
+    failPhase(phase, message, usefulProgress);
+    if (usefulProgress) {
+      phases.coreSync.status = "SUCCESS";
+      const deferred = Math.max(0, comparisonTotal - phases.comparisons.processed);
+      for (const comparisonPhase of [phases.comparisons, phases.ancestry, phases.patchEquivalence]) {
+        comparisonPhase.status = "PARTIAL";
+        comparisonPhase.deferred = deferred;
+        comparisonPhase.error = message;
+        comparisonPhase.completed_at = new Date().toISOString();
+      }
+      phases.comparisonCursor = comparisonTotal ? (comparisonStart + phases.comparisons.processed) % comparisonTotal : 0;
+    } else {
+      phases.coreSync.status = "FAILED";
+      phases.coreSync.error = message;
+      phases.coreSync.completed_at = new Date().toISOString();
+    }
+    const runStatus = usefulProgress ? "partial" : "failed";
+    await completeRun(db, { runId: run.id, outcome: runStatus, issues: issuesSeen, pullRequests: pullRequestsSeen, created, matched, ambiguous, error: message, result: phases });
     await db.prepare("INSERT INTO development_activity_events (actor_type, actor_identity, event_type, source, summary, metadata_json) VALUES (?, ?, 'github_sync_failed', 'github', ?, ?)")
-      .bind(trigger === "manual_readiness" ? "HUMAN" : "SYSTEM", initiator, `GitHub ${trigger === "manual_readiness" ? "readiness " : ""}sync failed.`, JSON.stringify({ syncRunId: run.id, trigger, diagnostic: safeSyncDiagnostic(error) })).run();
-    return { status: "failed" as const, runId: run.id, error: message, issues: 0, pullRequests: 0, branches: 0, created: 0, matched: 0, ambiguous: 0, skipped: 0, conflicts: 0 };
+      .bind(trigger === "manual_readiness" ? "HUMAN" : "SYSTEM", initiator, `GitHub ${trigger === "manual_readiness" ? "readiness " : ""}sync ${usefulProgress ? "partially completed" : "failed"}.`, JSON.stringify({ syncRunId: run.id, trigger, diagnostic, result: phases })).run();
+    return { status: runStatus as "partial" | "failed", runId: run.id, error: message, issues: issuesSeen, pullRequests: pullRequestsSeen, branches: phases.branches.processed, created, matched, ambiguous, skipped: 0, conflicts: 0, result: phases };
   }
 }

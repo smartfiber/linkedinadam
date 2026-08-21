@@ -8,6 +8,7 @@ import type {
   QaHandoff,
   GitHubSyncStatus,
 } from "./types";
+import { syncFreshness, type GitHubGranularSyncResult } from "./sync-state";
 
 type DevelopmentDatabase = D1Database;
 
@@ -333,10 +334,8 @@ export async function listActivity(db: DevelopmentDatabase, limit = 40) {
 export async function getGitHubSyncStatus(
   db: DevelopmentDatabase,
 ): Promise<GitHubSyncStatus> {
-  const [lastRun, branches] = await Promise.all([
-    db
-      .prepare(
-        `SELECT r.id, r.status, r.started_at, r.finished_at,
+  const selectLastRun = (granular: boolean) => db.prepare(
+        `SELECT r.id, r.status, ${granular ? "r.outcome, r.result_json," : "NULL AS outcome, NULL AS result_json,"} r.started_at, r.finished_at,
       CASE WHEN r.finished_at IS NULL THEN NULL ELSE CAST((julianday(r.finished_at) - julianday(r.started_at)) * 86400 AS INTEGER) END AS duration_seconds,
       r.issues_seen, r.pull_requests_seen, r.created_count, r.matched_count, r.ambiguous_count,
       (SELECT COUNT(*) FROM github_branch_mappings) AS branches_seen,
@@ -345,15 +344,20 @@ export async function getGitHubSyncStatus(
       (SELECT json_extract(e.metadata_json, '$.trigger') FROM development_activity_events e WHERE e.event_type = 'github_sync_started' AND json_extract(e.metadata_json, '$.syncRunId') = r.id ORDER BY e.id DESC LIMIT 1) AS trigger,
       (SELECT e.actor_identity FROM development_activity_events e WHERE e.event_type = 'github_sync_started' AND json_extract(e.metadata_json, '$.syncRunId') = r.id ORDER BY e.id DESC LIMIT 1) AS initiator
       FROM github_sync_runs r ORDER BY r.id DESC LIMIT 1`,
-      )
-      .first<GitHubSyncStatus["lastRun"]>(),
-    db
-      .prepare(
-        "SELECT role, branch_name, status, sha FROM github_branch_mappings ORDER BY CASE role WHEN 'adam' THEN 0 WHEN 'joe' THEN 1 WHEN 'dev' THEN 2 ELSE 3 END",
-      )
-      .all<GitHubSyncStatus["branches"][number]>(),
-  ]);
-  return { lastRun: lastRun || null, branches: branches.results || [] };
+      ).first<GitHubSyncStatus["lastRun"] & { outcome?: string | null; result_json?: string | null }>();
+  const branchesPromise = db.prepare("SELECT role, branch_name, status, sha, checked_at FROM github_branch_mappings ORDER BY CASE role WHEN 'adam' THEN 0 WHEN 'joe' THEN 1 WHEN 'dev' THEN 2 ELSE 3 END").all<GitHubSyncStatus["branches"][number]>();
+  let lastRun: Awaited<ReturnType<typeof selectLastRun>>;
+  try { lastRun = await selectLastRun(true); }
+  catch (error) {
+    if (!(error instanceof Error) || !/(?:no such column:?|has no column named)\s+(?:r\.)?(?:outcome|result_json)/i.test(error.message)) throw error;
+    lastRun = await selectLastRun(false);
+  }
+  const branches = await branchesPromise;
+  if (!lastRun) return { lastRun: null, branches: branches.results || [] };
+  let result: GitHubGranularSyncResult | null = null;
+  try { result = lastRun.result_json ? JSON.parse(lastRun.result_json) as GitHubGranularSyncResult : null; } catch { result = null; }
+  const effectiveStatus = lastRun.outcome || lastRun.status;
+  return { lastRun: { ...lastRun, status: effectiveStatus, result, freshness: syncFreshness(effectiveStatus, result, lastRun.finished_at) }, branches: branches.results || [] };
 }
 
 export function insertDevelopmentRequest(
