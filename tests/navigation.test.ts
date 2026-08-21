@@ -26,7 +26,7 @@ const appShell = readFileSync(
   "utf8",
 );
 const root = readFileSync(new URL("../app/root.tsx", import.meta.url), "utf8");
-const migrations = Array.from({ length: 17 }, (_, index) =>
+const migrations = Array.from({ length: 18 }, (_, index) =>
   readFileSync(
     new URL(
       `../migrations/${String(index + 1).padStart(4, "0")}_${
@@ -48,6 +48,7 @@ const migrations = Array.from({ length: 17 }, (_, index) =>
           "add_development_foundation",
           "add_github_sync",
           "add_devos_agent_control_plane",
+          "add_development_environments",
         ][index]
       }.sql`,
       import.meta.url,

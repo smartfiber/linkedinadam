@@ -16,6 +16,8 @@ export const STATUS_LABELS: Record<DevelopmentStatus, string> = {
 };
 
 export function statusLabel(status: string) {
+  if (status === "not_ready") return "Not Ready";
+  if (status === "ready_to_test") return "Ready to Test";
   return STATUS_LABELS[status as DevelopmentStatus] || status.replaceAll("_", " ");
 }
 
