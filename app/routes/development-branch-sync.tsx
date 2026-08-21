@@ -1,4 +1,4 @@
-import { Form, Link } from "react-router";
+import { Form, Link, useNavigation } from "react-router";
 import type { Route } from "./+types/development-branch-sync";
 import {
   requireAuthenticatedUser,
@@ -108,6 +108,11 @@ export default function DevelopmentBranchSync({
   loaderData,
   actionData,
 }: Route.ComponentProps) {
+  const navigation=useNavigation();
+  const pendingIntent=String(navigation.formData?.get("intent")||"");
+  const pendingRequestId=String(navigation.formData?.get("request_id")||"");
+  const syncPromptPending=(requestId:string)=>navigation.state!=="idle"&&pendingIntent==="generate_sync_prompt"&&pendingRequestId===requestId;
+  const reconciliationPending=navigation.state!=="idle"&&pendingIntent==="generate_reconciliation_prompt";
   const joe = loaderData.mappings.find((mapping) => mapping.role === "joe");
   const joeMapped = joe?.status === "MAPPED" && Boolean(joe.branchName);
   const result = loaderData.github.lastRun?.result;
@@ -220,7 +225,7 @@ export default function DevelopmentBranchSync({
       {actionData?.error?<p className="form-message error" role="alert">{actionData.error}</p>:actionData?.message?<p className="form-message success" role="status">{actionData.message}</p>:null}
       {actionData?.prompt?<details className="panel current-prompt" open><summary>Generated batch reconciliation prompt</summary><textarea readOnly rows={18} value={actionData.prompt}/><button type="button" onClick={()=>navigator.clipboard.writeText(actionData.prompt)}>Copy Prompt</button></details>:null}
 
-      <Form method="post"><input type="hidden" name="intent" value="generate_reconciliation_prompt"/><input type="hidden" name="scope" value="selected"/><div className="branch-batch-actions"><button>Generate Reconciliation Prompt for selected</button><button name="scope" value="visible">Generate for visible actionable rows</button></div><section
+      <Form method="post" aria-busy={reconciliationPending}><input type="hidden" name="intent" value="generate_reconciliation_prompt"/><input type="hidden" name="scope" value="selected"/><div className="branch-batch-actions"><button disabled={reconciliationPending}>{reconciliationPending?"Generating reconciliation prompt…":"Generate Reconciliation Prompt for selected"}</button><button name="scope" value="visible" disabled={reconciliationPending}>{reconciliationPending?"Working…":"Generate for visible actionable rows"}</button>{reconciliationPending?<span className="async-status" role="status"><span className="loading-spinner" aria-hidden="true"/>Analyzing selected branch evidence request by request…</span>:null}</div><section
         className="branch-matrix-wrap"
         aria-label="Branch comparison matrix"
       >
@@ -346,7 +351,7 @@ export default function DevelopmentBranchSync({
                   </td>
                   <td className="branch-next-action">
                     <strong>{guidance.action}</strong>
-                    <button form={`sync-prompt-${row.id}`} type="submit">Generate Sync Prompt</button>
+                    <button form={`sync-prompt-${row.id}`} type="submit" disabled={syncPromptPending(row.id)}>{syncPromptPending(row.id)?"Generating sync remediation prompt…":"Generate Sync Prompt"}</button>
                   </td>
                 </tr>
               );
@@ -358,7 +363,7 @@ export default function DevelopmentBranchSync({
         ) : null}
       </section>
       </Form>
-      {loaderData.rows.map(row=><Form method="post" id={`sync-prompt-${row.id}`} key={`prompt-${row.id}`}><input type="hidden" name="intent" value="generate_sync_prompt"/><input type="hidden" name="request_id" value={row.id}/><input type="hidden" name="target_tool" value="Codex"/></Form>)}
+      {loaderData.rows.map(row=><Form method="post" id={`sync-prompt-${row.id}`} key={`prompt-${row.id}`} aria-busy={syncPromptPending(row.id)}><input type="hidden" name="intent" value="generate_sync_prompt"/><input type="hidden" name="request_id" value={row.id}/><input type="hidden" name="target_tool" value="Codex"/>{syncPromptPending(row.id)?<span className="sr-only" role="status">Generating sync remediation prompt for {row.title}…</span>:null}</Form>)}
     </main>
   );
 }

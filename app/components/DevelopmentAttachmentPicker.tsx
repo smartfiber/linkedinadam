@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
 
-export function DevelopmentAttachmentPicker({name="attachments",label="Screenshots / Attachments"}:{name?:string;label?:string}){
+export function DevelopmentAttachmentPicker({name="attachments",label="Screenshots / Attachments",resetKey=0}:{name?:string;label?:string;resetKey?:number}){
   const input=useRef<HTMLInputElement>(null);const [files,setFiles]=useState<File[]>([]);const [previews,setPreviews]=useState<string[]>([]);
   useEffect(()=>{const next=files.map(file=>URL.createObjectURL(file));setPreviews(next);return()=>next.forEach(URL.revokeObjectURL);},[files]);
+  useEffect(()=>{setFiles([]);if(input.current)input.current.value="";},[resetKey]);
   function apply(next:File[]){const accepted=next.filter(file=>["image/png","image/jpeg","image/webp"].includes(file.type)).slice(0,8);setFiles(accepted);if(input.current){const transfer=new DataTransfer();accepted.forEach(file=>transfer.items.add(file));input.current.files=transfer.files;}}
   function append(values:File[]){apply([...files,...values.filter(file=>!files.some(existing=>existing.name===file.name&&existing.size===file.size))]);}
   function onPaste(event:ClipboardEvent<HTMLDivElement>){const images=Array.from(event.clipboardData.files);if(images.length){event.preventDefault();append(images);}}
