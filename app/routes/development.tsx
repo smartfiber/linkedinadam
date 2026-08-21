@@ -29,6 +29,9 @@ import {
   type DevelopmentFilters,
 } from "../lib/development/types";
 import { statusLabel, statusTone } from "../lib/development/status";
+import { environmentQaForRequest } from "../lib/development/environments.server";
+import { composeEnvironmentTestUrl } from "../lib/development/environments";
+import { getEnvironmentQaReadiness } from "../lib/development/environment-readiness.server";
 
 type DevelopmentEnvironment = AccessEnvironment &
   GitHubEnvironment & { linkedinadam_db: D1Database };
@@ -131,15 +134,30 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     ? requestedTab
     : "overview";
   const filters = filtersFromUrl(url);
-  const [summary, requests, attention, activity, detail, github] =
-    await Promise.all([
-      getDevelopmentSummary(env.linkedinadam_db),
-      listDevelopmentRequests(env.linkedinadam_db, filters),
-      listNeedsAttention(env.linkedinadam_db, user.email),
-      listActivity(env.linkedinadam_db),
-      requestId ? getDevelopmentRequest(env.linkedinadam_db, requestId) : null,
-      getGitHubSyncStatus(env.linkedinadam_db),
-    ]);
+  const environmentQaReadiness = await getEnvironmentQaReadiness(
+    env.linkedinadam_db,
+  );
+  if (environmentQaReadiness.state === "ERROR")
+    throw environmentQaReadiness.error;
+  const [
+    summary,
+    requests,
+    attention,
+    activity,
+    detail,
+    github,
+    environmentQa,
+  ] = await Promise.all([
+    getDevelopmentSummary(env.linkedinadam_db),
+    listDevelopmentRequests(env.linkedinadam_db, filters),
+    listNeedsAttention(env.linkedinadam_db, user.email),
+    listActivity(env.linkedinadam_db),
+    requestId ? getDevelopmentRequest(env.linkedinadam_db, requestId) : null,
+    getGitHubSyncStatus(env.linkedinadam_db),
+    requestId && environmentQaReadiness.state === "READY"
+      ? environmentQaForRequest(env.linkedinadam_db, requestId)
+      : [],
+  ]);
 
   return {
     summary,
@@ -151,6 +169,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     filters,
     user,
     github,
+    environmentQa,
+    environmentQaInitialized: environmentQaReadiness.state === "READY",
     githubConnection: {
       connected: Boolean(
         env.GITHUB_APP_ID &&
@@ -347,6 +367,8 @@ export default function Development({
     user,
     github,
     githubConnection,
+    environmentQa,
+    environmentQaInitialized,
   } = loaderData;
   const developmentListUrl = developmentUrl(filters);
   const githubIssue = detail?.githubItems.find((item) => item.kind === "issue");
@@ -383,11 +405,22 @@ export default function Development({
           <a className="secondary-link" href="#new-request">
             New Request
           </a>
+          <Link className="secondary-link" to="/development/environments">
+            Environments &amp; QA
+          </Link>
           <Link className="button-link" to="/development/console">
             Development Console
           </Link>
         </div>
       </header>
+
+      <nav className="development-subnav" aria-label="Development navigation">
+        <Link aria-current="page" to="/development">
+          Requests
+        </Link>
+        <Link to="/development/environments">Environments &amp; QA</Link>
+        <Link to="/development/console">Development Console</Link>
+      </nav>
 
       <section
         className="development-summary-grid"
@@ -752,6 +785,12 @@ export default function Development({
                             : ""}
                         </span>
                         <StatusBadge value={item.overall_status} />
+                      </Link>
+                      <Link
+                        className="request-test-link"
+                        to={`/development/environments?request=${item.id}`}
+                      >
+                        Test
                       </Link>
                     </td>
                     <td>
@@ -1176,6 +1215,79 @@ export default function Development({
             ) : null}
             {detailTab === "qa" ? (
               <>
+                <section>
+                  <div className="development-detail-heading">
+                    <h3>Test Environments</h3>
+                    <Link
+                      className="secondary-link"
+                      to={`/development/environments?request=${detail.request.id}`}
+                    >
+                      Open QA workspace
+                    </Link>
+                  </div>
+                  {environmentQaInitialized ? (
+                    <div className="request-environment-table-wrap">
+                      <table className="request-environment-table">
+                        <thead>
+                          <tr>
+                            <th>Environment</th>
+                            <th>Test URL</th>
+                            <th>Status</th>
+                            <th>Tester</th>
+                            <th>Last Tested</th>
+                            <th>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {environmentQa.map((row) => {
+                            const testLink = composeEnvironmentTestUrl(
+                              row.base_url,
+                              row.test_path,
+                            );
+                            return (
+                              <tr key={row.environment_id}>
+                                <td>{row.environment_name}</td>
+                                <td>
+                                  <a
+                                    href={testLink.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    {testLink.specific
+                                      ? testLink.url
+                                      : "Environment root"}
+                                  </a>
+                                  {!testLink.specific ? (
+                                    <small>Specific test route required</small>
+                                  ) : null}
+                                </td>
+                                <td>
+                                  <StatusBadge value={row.qa_status} />
+                                </td>
+                                <td>{row.tester_name || "Not tested"}</td>
+                                <td>{row.tested_at || "Never"}</td>
+                                <td>
+                                  <a
+                                    className="secondary-link"
+                                    href={testLink.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    Open &amp; Test
+                                  </a>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="empty-state">
+                      Environment QA workspace awaiting database initialization.
+                    </p>
+                  )}
+                </section>
                 <section>
                   <h3>QA workflow</h3>
                   <div

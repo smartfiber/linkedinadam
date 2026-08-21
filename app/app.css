@@ -1173,6 +1173,46 @@ button.secondary {
 .github-record-card dt { color: #69758c; font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .github-record-card dd { margin: 3px 0 0; overflow-wrap: anywhere; color: #344057; font-size: 11px; }
 .github-record-card > a { width: max-content; color: #176c4a; font-size: 11px; font-weight: 800; }
+.development-subnav { display: flex; gap: 4px; max-width: 1800px; margin: 0 auto 12px; padding: 4px; border: 1px solid #dfe5ed; border-radius: 7px; background: #fff; }
+.development-subnav a { padding: 7px 10px; border-radius: 5px; color: #526079; font-size: 11px; font-weight: 800; text-decoration: none; }
+.development-subnav a[aria-current="page"] { color: #176c4a; background: #e9f7f0; }
+.request-test-link { width: max-content; color: #1675e7 !important; font-size: 10px; font-weight: 800; }
+.environment-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; max-width: 1800px; margin: 0 auto 12px; }
+.environment-summary a { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border: 1px solid #dfe5ed; border-radius: 7px; color: #526079; background: #fff; text-decoration: none; }
+.environment-summary span { font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.environment-summary strong { color: #172033; font-size: 18px; }
+.environment-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-width: 1800px; margin: 0 auto 12px; }
+.environment-card { padding: 14px; border: 1px solid #dfe5ed; border-radius: 8px; background: #fff; }
+.environment-card header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.environment-card h2 { margin: 2px 0 0; font-size: 17px; }
+.environment-card > p { color: #69758c; font-size: 12px; }
+.environment-card dl { display: grid; grid-template-columns: 1fr 2fr; gap: 8px 14px; margin: 12px 0; }
+.environment-card dl div { min-width: 0; }
+.environment-card dt,
+.environment-qa-card dt { color: #69758c; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.environment-card dd,
+.environment-qa-card dd { margin: 3px 0 0; overflow-wrap: anywhere; color: #344057; font-size: 11px; }
+.environment-card a:not(.button-link),
+.environment-qa-card a:not(.button-link):not(.secondary-link) { color: #176c4a; }
+.environment-qa-grid { display: grid; gap: 8px; }
+.environment-qa-card { padding: 12px; border: 1px solid #dfe5ed; border-radius: 7px; background: #fafbfd; }
+.environment-qa-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.environment-qa-card > header div { display: grid; gap: 3px; }
+.environment-qa-card > header span { color: #69758c; font-size: 10px; }
+.environment-qa-card dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 14px; margin: 12px 0; }
+.environment-qa-card dd { white-space: pre-wrap; }
+.environment-qa-card dd small,
+.request-environment-table small { display: block; margin-top: 3px; color: #a06a0b; font-size: 9px; }
+.environment-qa-actions { display: flex; gap: 7px; margin-bottom: 9px; }
+.environment-result-form { display: grid; grid-template-columns: 150px minmax(180px, 1fr) auto; align-items: end; gap: 7px; padding-top: 9px; border-top: 1px solid #e1e6ee; }
+.environment-result-form label { display: grid; gap: 3px; color: #69758c; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.environment-result-form input,
+.environment-result-form select { width: 100%; box-sizing: border-box; padding: 7px 8px; border: 1px solid #d8e0eb; border-radius: 6px; background: #fff; }
+.request-environment-table-wrap { overflow-x: auto; }
+.request-environment-table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: 10px; }
+.request-environment-table th,
+.request-environment-table td { padding: 8px; border-bottom: 1px solid #e6ebf2; text-align: left; vertical-align: top; }
+.request-environment-table th { color: #69758c; font-size: 9px; text-transform: uppercase; }
 
 @media (max-width: 1100px) {
   .development-summary-grid { grid-template-columns: repeat(4, 1fr); }
@@ -1193,6 +1233,18 @@ button.secondary {
   .qa-stage-flow,
   .branch-state-matrix { grid-template-columns: 1fr 1fr; }
   .github-record-card dl { grid-template-columns: 1fr; }
+  .environment-grid,
+  .environment-summary { grid-template-columns: 1fr 1fr; }
+  .environment-qa-card dl { grid-template-columns: 1fr 1fr; }
+  .environment-result-form { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 520px) {
+  .environment-grid,
+  .environment-summary,
+  .environment-qa-card dl { grid-template-columns: 1fr; }
+  .development-subnav { overflow-x: auto; }
+  .development-subnav a { white-space: nowrap; }
 }
 
 /* Connection growth workspace */

@@ -18,6 +18,8 @@ import { requireAuthenticatedUser, type AccessEnvironment } from "../lib/auth.se
 import { getDevelopmentSummary, listNeedsAttention } from "../lib/development/repository.server";
 import { agentControlSummary } from "../lib/agents/service.server";
 import { getAgentControlPlaneStatus } from "../lib/agents/readiness.server";
+import { getEnvironmentQaSummary } from "../lib/development/environments.server";
+import { getEnvironmentQaReadiness } from "../lib/development/environment-readiness.server";
 
 type Employee = {
   id: number;
@@ -355,7 +357,9 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     `)
     .bind(`${today}T00:00`, `${dayAfterTomorrow}T00:00`)
     .all<DailyHomeDraft>();
-  const [developmentSummary, developmentAttention, agentStatus] = await Promise.all([getDevelopmentSummary(env.linkedinadam_db), listNeedsAttention(env.linkedinadam_db, user.email), getAgentControlPlaneStatus(env.linkedinadam_db)]);
+  const environmentQaReadiness = await getEnvironmentQaReadiness(env.linkedinadam_db);
+  if (environmentQaReadiness.state === "ERROR") throw environmentQaReadiness.error;
+  const [developmentSummary, developmentAttention, environmentQaSummary, agentStatus] = await Promise.all([getDevelopmentSummary(env.linkedinadam_db), listNeedsAttention(env.linkedinadam_db, user.email), environmentQaReadiness.state === "READY" ? getEnvironmentQaSummary(env.linkedinadam_db) : Promise.resolve({ needsAdam: 0, needsJoe: 0, failedRetest: 0, readyForDev: 0 }), getAgentControlPlaneStatus(env.linkedinadam_db)]);
   if (agentStatus.state === "ERROR") throw agentStatus.error;
   const agentSummary = agentStatus.state === "READY"
     ? await agentControlSummary(env.linkedinadam_db)
@@ -373,6 +377,8 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     weekStart,
     developmentSummary,
     developmentAttention: developmentAttention.results || [],
+    environmentQaSummary,
+    environmentQaInitialized: environmentQaReadiness.state === "READY",
     agentSummary,
     agentControlPlaneReady: agentStatus.state === "READY",
     user,
@@ -1821,6 +1827,8 @@ export default function Home({
   const tomorrow = loaderData.tomorrow;
   const weekStart = loaderData.weekStart;
   const developmentSummary = loaderData.developmentSummary;
+  const environmentQaSummary = loaderData.environmentQaSummary;
+  const environmentQaInitialized = loaderData.environmentQaInitialized;
   const developmentAttention = loaderData.developmentAttention;
   const agentSummary = loaderData.agentSummary;
   const agentControlPlaneReady = loaderData.agentControlPlaneReady;
@@ -1875,6 +1883,11 @@ export default function Home({
           <div className="panel-heading"><div><p className="eyebrow">DEVELOPMENT</p><h2>Delivery control</h2></div><a className="secondary-link" href="/development">Open Development</a></div>
           <div className="command-metrics">{[["P0 Open",developmentSummary.p0Open,"urgent"],["P1 Open",developmentSummary.p1Open,"urgent"],["Needs Adam",developmentSummary.awaitingAdam,"needs_adam"],["Needs Joe",developmentSummary.awaitingJoe,"needs_joe"],["Ready for Dev",developmentSummary.readyForDev,"ready_dev"],["Main / Verify",developmentSummary.onMainNeedsVerification,"main_verify"],["Blocked",developmentSummary.blocked,"blocked"]].map(([label,value,view]) => <a key={label} href={`/development?view=${view}`}><span>{label}</span><strong>{value}</strong></a>)}</div>
           <div className="command-attention"><h3>Needs Your Attention</h3>{developmentAttention.length ? <ul>{developmentAttention.slice(0,5).map(item => <li key={item.id}><a href={`/development?request=${item.id}`}>{item.priority} · {item.title}</a><span>{item.next_action || item.overall_status}</span></li>)}</ul> : <p>No Development items currently require {loaderData.user.displayName}.</p>}</div>
+        </section>
+
+        <section className="command-environment-qa panel">
+          <div className="panel-heading"><div><p className="eyebrow">ENVIRONMENT QA</p><h2>Independent verification</h2></div><a className="secondary-link" href="/development/environments">Open Environments &amp; QA</a></div>
+          {environmentQaInitialized ? <div className="command-agent-metrics">{[["Needs Adam", environmentQaSummary.needsAdam, "needs-adam"], ["Needs Joe", environmentQaSummary.needsJoe, "needs-joe"], ["Failed / Retest", environmentQaSummary.failedRetest, "failed-retest"], ["Ready for Dev", environmentQaSummary.readyForDev, "ready-dev"]].map(([label, value, anchor]) => <a href={`/development/environments#${anchor}`} key={label}><span>{label}</span><strong>{value}</strong></a>)}</div> : <p className="empty-state">Environment QA awaiting database initialization.</p>}
         </section>
 
         <section className="command-agents panel">
