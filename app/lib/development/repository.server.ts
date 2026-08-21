@@ -133,6 +133,9 @@ export async function listDevelopmentRequests(
           WHEN r.overall_status = 'on_main_needs_verification' THEN 'Verify production'
           WHEN NOT EXISTS (SELECT 1 FROM github_sync_items p WHERE p.development_request_id = r.id AND p.kind = 'pull_request')
             AND EXISTS (SELECT 1 FROM github_sync_items i WHERE i.development_request_id = r.id AND i.kind = 'issue')
+            AND r.owner_email IS NULL AND r.product_area IS NULL THEN 'Needs triage'
+          WHEN NOT EXISTS (SELECT 1 FROM github_sync_items p WHERE p.development_request_id = r.id AND p.kind = 'pull_request')
+            AND EXISTS (SELECT 1 FROM github_sync_items i WHERE i.development_request_id = r.id AND i.kind = 'issue')
             AND r.owner_email IS NULL THEN 'Needs implementation owner'
           WHEN NOT EXISTS (SELECT 1 FROM github_sync_items p WHERE p.development_request_id = r.id AND p.kind = 'pull_request')
             AND EXISTS (SELECT 1 FROM github_sync_items i WHERE i.development_request_id = r.id AND i.kind = 'issue') THEN 'Needs branch / PR'
@@ -221,6 +224,9 @@ export async function getDevelopmentRequest(
         WHEN r.overall_status = 'ready_for_dev' THEN 'Ready for Dev'
         WHEN r.overall_status = 'ready_for_main' THEN 'Ready for Main'
         WHEN r.overall_status = 'on_main_needs_verification' THEN 'Verify production'
+        WHEN NOT EXISTS (SELECT 1 FROM github_sync_items p WHERE p.development_request_id = r.id AND p.kind = 'pull_request')
+          AND EXISTS (SELECT 1 FROM github_sync_items i WHERE i.development_request_id = r.id AND i.kind = 'issue')
+          AND r.owner_email IS NULL AND r.product_area IS NULL THEN 'Needs triage'
         WHEN NOT EXISTS (SELECT 1 FROM github_sync_items p WHERE p.development_request_id = r.id AND p.kind = 'pull_request')
           AND EXISTS (SELECT 1 FROM github_sync_items i WHERE i.development_request_id = r.id AND i.kind = 'issue')
           AND r.owner_email IS NULL THEN 'Needs implementation owner'

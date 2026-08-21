@@ -10,6 +10,7 @@ import {
   summarizeBranchSync,
 } from "../lib/development/branch-sync.server";
 import {
+  branchStateIcon,
   branchSyncGuidance,
   displayBranchState,
   rowMatchesBranchView,
@@ -17,6 +18,7 @@ import {
   type BranchSyncState,
 } from "../lib/development/branch-sync";
 import { statusLabel, statusTone } from "../lib/development/status";
+import { getGitHubSyncStatus } from "../lib/development/repository.server";
 
 type Env = AccessEnvironment & { linkedinadam_db: D1Database };
 
@@ -25,9 +27,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const user = await requireAuthenticatedUser(request, env);
   const url = new URL(request.url);
   const view = url.searchParams.get("view") || "all";
-  const [rows, mappings] = await Promise.all([
+  const [rows, mappings, github] = await Promise.all([
     listBranchSyncRows(env.linkedinadam_db),
     getBranchMappings(env.linkedinadam_db),
+    getGitHubSyncStatus(env.linkedinadam_db),
   ]);
   const joe = mappings.find((mapping) => mapping.role === "joe");
   const joeMapped = joe?.status === "MAPPED" && Boolean(joe.branchName);
@@ -35,6 +38,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     rows: rows.filter((row) => rowMatchesBranchView(row, view, joeMapped)),
     summary: summarizeBranchSync(rows, joeMapped),
     mappings,
+    github,
     view,
     user,
   };
@@ -52,6 +56,7 @@ function BranchState({ value }: { value: BranchSyncState }) {
           : "attention";
   return (
     <span className={`development-status ${tone}`}>
+      <span aria-hidden="true">{branchStateIcon(value)}</span>
       {label}
       {syncConfidence(value) !== "UNKNOWN" ? (
         <small>{syncConfidence(value).replaceAll("_", " ")}</small>
@@ -105,6 +110,24 @@ export default function DevelopmentBranchSync({
         <Link to="/development/environments">Environments &amp; QA</Link>
         <Link to="/development/console">Development Console</Link>
       </nav>
+
+      <section
+        className={`branch-sync-health ${loaderData.github.lastRun?.status === "failed" ? "failed" : ""}`}
+        role="status"
+      >
+        <strong>
+          {loaderData.github.lastRun?.status === "failed"
+            ? "GitHub sync failed — showing last known branch observations"
+            : loaderData.github.lastRun
+              ? `Last GitHub sync: ${loaderData.github.lastRun.status}`
+              : "No GitHub sync run recorded"}
+        </strong>
+        <span>
+          {loaderData.github.lastRun?.finished_at ||
+            loaderData.github.lastRun?.started_at ||
+            "Branch timestamps remain visible per row"}
+        </span>
+      </section>
 
       {!joeMapped ? (
         <section className="panel branch-mapping-warning" role="status">
@@ -206,7 +229,8 @@ export default function DevelopmentBranchSync({
                               <strong>{branch}</strong>:{" "}
                               {row[branch].sha?.slice(0, 12) || "No SHA"} ·{" "}
                               {row[branch].comparison} ·{" "}
-                              {syncConfidence(row[branch])}
+                              {syncConfidence(row[branch])} · checked{" "}
+                              {row[branch].checkedAt || "never"}
                             </p>
                           ),
                         )}

@@ -139,7 +139,42 @@ describe("DEVOS Branch Sync", () => {
     expect(branchSyncGuidance(issueOnly, true).action).toBe(
       "Needs implementation owner",
     );
+    expect(
+      branchSyncGuidance(
+        row({
+          prNumber: null,
+          prUrl: null,
+          ownerEmail: null,
+          productArea: null,
+        }),
+        true,
+      ).action,
+    ).toBe("Needs triage");
     expect(repository).toContain("Needs branch / PR");
+    expect(branchSyncGuidance(issueOnly, true).action).not.toBe(
+      "Review GitHub status",
+    );
+    const notStarted = row({
+      prNumber: null,
+      prUrl: null,
+      adam: state("not_present"),
+      joe: state("not_present"),
+      dev: state("not_present"),
+      main: state("not_present"),
+    });
+    expect(branchSyncGuidance(notStarted, true).action).toBe(
+      "No implementation started",
+    );
+    expect(
+      branchSyncGuidance(
+        row({
+          prNumber: null,
+          prUrl: null,
+          adam: state("unknown", "UNKNOWN", "UNKNOWN"),
+        }),
+        true,
+      ).action,
+    ).toBe("Needs branch / PR");
   });
 
   it("requires mapping before personal branch guidance", () => {
@@ -163,6 +198,8 @@ describe("DEVOS Branch Sync", () => {
       ),
     ).toBe(true);
     expect(route).toContain("Why DEVOS thinks these differ");
+    expect(route).toContain("showing last known branch observations");
+    expect(route).toContain("checkedAt");
   });
 
   it("shows QA beside branch state without mutating QA", () => {

@@ -103,6 +103,8 @@ export function branchSyncGuidance(row: BranchSyncRow, joeMapped: boolean) {
   if (!row.prNumber) {
     if (!row.issueNumber)
       return { promotion: "Triage", action: "Needs triage" };
+    if (!row.ownerEmail && !row.productArea)
+      return { promotion: "Triage", action: "Needs triage" };
     if (!row.ownerEmail)
       return {
         promotion: "Implementation",
@@ -173,6 +175,15 @@ export function displayBranchState(state: BranchSyncState) {
   if (state.state === "not_present") return "Not Present";
   if (state.state === "patch_equivalent") return "Patch Equivalent";
   return "Unknown";
+}
+
+export function branchStateIcon(state: BranchSyncState) {
+  const label = displayBranchState(state);
+  if (label === "Exact" || label === "Present") return "✓";
+  if (label === "Patch Equivalent") return "≈";
+  if (label === "Conflict") return "!";
+  if (label === "Not Present") return "—";
+  return "?";
 }
 
 export function syncConfidence(state: BranchSyncState) {
