@@ -24,6 +24,13 @@ const home = readFileSync(
   new URL("../app/routes/home.tsx", import.meta.url),
   "utf8",
 );
+const repository = readFileSync(
+  new URL(
+    "../app/lib/development/environments.server.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const adam: DevelopmentActor = {
   email: "adam@net-x.io",
   displayName: "Adam",
@@ -157,6 +164,10 @@ describe("DEVOS environment QA", () => {
       "Ready for Dev",
     ])
       expect(route).toContain(label);
+    expect(repository).toContain(
+      "latest.status IN ('ready_to_test','testing','failed')",
+    );
+    expect(repository).toContain("note: input.notes?.trim() || null");
   });
 
   it("links environments from requests, drawer QA, and Command Center", () => {

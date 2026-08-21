@@ -24,8 +24,8 @@ export async function listDevelopmentEnvironments(db: D1Database) {
       `
     SELECT e.*,
       CASE e.slug
-        WHEN 'adam' THEN (SELECT COUNT(*) FROM development_requests r WHERE r.overall_status = 'awaiting_adam' OR EXISTS (SELECT 1 FROM environment_qa_attempts a WHERE a.development_request_id=r.id AND a.environment_id=e.id AND a.status='failed' AND a.id=(SELECT MAX(a2.id) FROM environment_qa_attempts a2 WHERE a2.development_request_id=r.id AND a2.environment_id=e.id)))
-        WHEN 'joe' THEN (SELECT COUNT(*) FROM development_requests r WHERE r.overall_status = 'awaiting_joe' OR EXISTS (SELECT 1 FROM environment_qa_attempts a WHERE a.development_request_id=r.id AND a.environment_id=e.id AND a.status='failed' AND a.id=(SELECT MAX(a2.id) FROM environment_qa_attempts a2 WHERE a2.development_request_id=r.id AND a2.environment_id=e.id)))
+        WHEN 'adam' THEN (SELECT COUNT(*) FROM development_requests r WHERE r.overall_status = 'awaiting_adam' OR EXISTS (SELECT 1 FROM environment_qa_attempts a WHERE a.development_request_id=r.id AND a.environment_id=e.id AND a.status IN ('ready_to_test','testing','failed') AND a.id=(SELECT MAX(a2.id) FROM environment_qa_attempts a2 WHERE a2.development_request_id=r.id AND a2.environment_id=e.id)))
+        WHEN 'joe' THEN (SELECT COUNT(*) FROM development_requests r WHERE r.overall_status = 'awaiting_joe' OR EXISTS (SELECT 1 FROM environment_qa_attempts a WHERE a.development_request_id=r.id AND a.environment_id=e.id AND a.status IN ('ready_to_test','testing','failed') AND a.id=(SELECT MAX(a2.id) FROM environment_qa_attempts a2 WHERE a2.development_request_id=r.id AND a2.environment_id=e.id)))
         ELSE 0
       END AS current_qa_workload,
       (SELECT MAX(a.tested_at) FROM environment_qa_attempts a WHERE a.environment_id=e.id AND a.status='passed') AS last_verification
@@ -62,8 +62,8 @@ export async function listEnvironmentQaQueue(db: D1Database) {
       SELECT MAX(a.id) FROM environment_qa_attempts a
       WHERE a.development_request_id=r.id AND a.environment_id=e.id)
     WHERE e.active=1 AND (
-      (e.slug='adam' AND (r.overall_status='awaiting_adam' OR latest.status='failed')) OR
-      (e.slug='joe' AND (r.overall_status='awaiting_joe' OR latest.status='failed')) OR
+      (e.slug='adam' AND (r.overall_status='awaiting_adam' OR latest.status IN ('ready_to_test','testing','failed'))) OR
+      (e.slug='joe' AND (r.overall_status='awaiting_joe' OR latest.status IN ('ready_to_test','testing','failed'))) OR
       r.overall_status='ready_for_dev'
     )
     ORDER BY CASE r.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
@@ -208,6 +208,7 @@ export async function recordEnvironmentQaAttempt(
         environmentId: input.environmentId,
         stage: input.stage,
         status: input.status,
+        note: input.notes?.trim() || null,
       },
     }),
   ]);

@@ -202,12 +202,14 @@ export default function DevelopmentEnvironments({
     adam: loaderData.queue.filter(
       (row) =>
         row.environment_slug === "adam" &&
-        (row.overall_status === "awaiting_adam" || row.qa_status === "failed"),
+        (row.overall_status === "awaiting_adam" ||
+          ["ready_to_test", "testing", "failed"].includes(row.qa_status)),
     ),
     joe: loaderData.queue.filter(
       (row) =>
         row.environment_slug === "joe" &&
-        (row.overall_status === "awaiting_joe" || row.qa_status === "failed"),
+        (row.overall_status === "awaiting_joe" ||
+          ["ready_to_test", "testing", "failed"].includes(row.qa_status)),
     ),
     ready: loaderData.queue.filter(
       (row) => row.overall_status === "ready_for_dev",
