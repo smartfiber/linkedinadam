@@ -1,8 +1,8 @@
 import { generateKeyPairSync } from "node:crypto";
 import { importPKCS8, importSPKI, jwtVerify, SignJWT } from "jose";
 import { describe, expect, it } from "vitest";
-import { boundedPullRequests, DEFAULT_NET_X_REPOSITORY, githubConfigurationError, mapWithConcurrency, MAX_SYNC_PULL_REQUESTS, normalizeGitHubAppPrivateKey, repositoryFromEnvironment } from "../app/lib/integrations/github.server";
-import { checkState, computeBranchState, discoverBranchMappings, issueNumbersFromText, nextActionForPullRequest, patchEquivalence } from "../app/lib/development/sync.server";
+import { boundedPullRequests, DEFAULT_NET_X_REPOSITORY, githubConfigurationError, mapWithConcurrency, MAX_SYNC_PULL_REQUESTS, normalizeGitHubAppPrivateKey, repositoryFromEnvironment, SCHEDULED_PR_BATCH_SIZE } from "../app/lib/integrations/github.server";
+import { checkState, computeBranchState, discoverBranchMappings, issueNumbersFromText, nextActionForIssue, nextActionForPullRequest, patchEquivalence, priorityForIssue } from "../app/lib/development/sync.server";
 import { supportedGitHubWebhookEvent, verifyGitHubWebhookSignature } from "../app/lib/integrations/github-webhook.server";
 
 const file = (filename: string, patch: string | null) => ({ filename, patch, status: "modified", additions: 1, deletions: 1 });
@@ -82,6 +82,24 @@ describe("read-only GitHub sync helpers", () => {
     const values = Array.from({ length: 75 }, (_, index) => index);
     expect(MAX_SYNC_PULL_REQUESTS).toBe(3);
     expect(boundedPullRequests(values)).toEqual(values.slice(0, 3));
+  });
+
+  it("keeps scheduled PR batches at the existing three-PR safety ceiling", () => {
+    expect(SCHEDULED_PR_BATCH_SIZE).toBe(3);
+    expect(SCHEDULED_PR_BATCH_SIZE).toBeLessThanOrEqual(MAX_SYNC_PULL_REQUESTS);
+  });
+
+  it("uses explicit priority signals without treating all security text as P0", () => {
+    const issue = { id: 1, number: 540, title: "P0: Production hard stop", body: null, state: "open", labels: [], author: null, htmlUrl: "", createdAt: "", updatedAt: "", closedAt: null } as const;
+    expect(priorityForIssue(issue)).toBe("P0");
+    expect(priorityForIssue({ ...issue, title: "P0: title", labels: ["priority: high"] })).toBe("P1");
+    expect(priorityForIssue({ ...issue, title: "Security documentation", labels: ["security"] })).toBe("P2");
+  });
+
+  it("keeps closed GitHub issues in the human verification workflow", () => {
+    const issue = { id: 1, number: 609, title: "Closed upstream", body: null, state: "closed", labels: [], author: null, htmlUrl: "", createdAt: "", updatedAt: "", closedAt: "2026-08-20T00:00:00Z" } as const;
+    expect(nextActionForIssue(issue)).toBe("GitHub closed — production verification required");
+    expect(nextActionForIssue({ ...issue, state: "open", closedAt: null })).toBe("Review GitHub status");
   });
 
   it("verifies webhook HMAC signatures and rejects unsupported events", async () => {

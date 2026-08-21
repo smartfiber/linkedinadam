@@ -140,8 +140,10 @@ export async function listBranchSyncRows(db: D1Database) {
       main.state AS main_state, main.commit_sha AS main_sha, main.comparison_state AS main_comparison,
       main.confidence AS main_confidence, main.equivalence_notes AS main_notes, main.checked_at AS main_checked
     FROM development_requests r
-    LEFT JOIN github_sync_items issue ON issue.id=(SELECT MIN(i.id) FROM github_sync_items i WHERE i.development_request_id=r.id AND i.kind='issue')
-    LEFT JOIN github_sync_items pr ON pr.id=(SELECT MAX(p.id) FROM github_sync_items p WHERE p.development_request_id=r.id AND p.kind='pull_request')
+    LEFT JOIN development_links issue_link ON issue_link.id=(SELECT MIN(i.id) FROM development_links i WHERE i.development_request_id=r.id AND i.provider='github' AND i.type='issue')
+    LEFT JOIN github_sync_items issue ON issue.kind='issue' AND issue.number=CAST(issue_link.external_id AS INTEGER)
+    LEFT JOIN development_links pr_link ON pr_link.id=(SELECT MAX(p.id) FROM development_links p WHERE p.development_request_id=r.id AND p.provider='github' AND p.type='pull_request')
+    LEFT JOIN github_sync_items pr ON pr.kind='pull_request' AND pr.number=CAST(pr_link.external_id AS INTEGER)
     LEFT JOIN development_branch_states adam ON adam.development_request_id=r.id AND adam.branch='adam'
     LEFT JOIN development_branch_states joe ON joe.development_request_id=r.id AND joe.branch='joe'
     LEFT JOIN development_branch_states dev ON dev.development_request_id=r.id AND dev.branch='dev'
