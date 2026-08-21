@@ -24,10 +24,13 @@ export type GitHubPullRequestSnapshot = {
 };
 export type GitHubBranchSnapshot = { name: string; sha: string };
 export type GitHubCompareSnapshot = { status: "ahead" | "behind" | "identical" | "diverged" | "unknown"; aheadBy: number; behindBy: number; files: GitHubChangedFileSnapshot[] };
+export type GitHubPullRequestCursor = { scope: "open" | "recent_closed" | "tracked"; page: number };
+export type GitHubPullRequestBatch = { items: GitHubPullRequestSnapshot[]; nextCursor: GitHubPullRequestCursor; cycleComplete: boolean };
 export type GitHubReadAdapter = {
   repository: GitHubRepositoryRef;
   listIssues(): Promise<GitHubIssueSnapshot[]>;
   listPullRequests(): Promise<GitHubPullRequestSnapshot[]>;
+  listScheduledPullRequests?(cursor: GitHubPullRequestCursor, trackedPullRequestNumbers?: number[]): Promise<GitHubPullRequestBatch>;
   listBranches(): Promise<GitHubBranchSnapshot[]>;
   compare(base: string, head: string): Promise<GitHubCompareSnapshot>;
 };
@@ -146,13 +149,42 @@ export async function mapWithConcurrency<T, U>(values: T[], limit: number, opera
 }
 
 export const MAX_SYNC_PULL_REQUESTS = 3;
+export const SCHEDULED_PR_BATCH_SIZE = MAX_SYNC_PULL_REQUESTS;
+export const RECENT_CLOSED_PR_DAYS = 90;
 export function boundedPullRequests<T>(values: T[]) {
   return values.slice(0, MAX_SYNC_PULL_REQUESTS);
+}
+
+export function initialPullRequestCursor(): GitHubPullRequestCursor {
+  return { scope: "open", page: 1 };
 }
 
 export function createGitHubReadAdapter(env: GitHubEnvironment): GitHubReadAdapter {
   const repository = repositoryFromEnvironment(env); let tokenPromise: Promise<string> | undefined; const token = () => tokenPromise ||= appToken(env);
   const base = `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}`;
+  async function pullRequestRows(state: "all" | "open" | "closed", page: number, perPage: number) {
+    const value = await githubRequest<unknown>(await token(), `${base}/pulls?state=${state}&sort=updated&direction=desc&per_page=${perPage}&page=${page}`);
+    return Array.isArray(value) ? value as Record<string, unknown>[] : [];
+  }
+  async function enrichPullRequests(rows: Record<string, unknown>[]) {
+    return mapWithConcurrency(rows, 8, async value => {
+      const number = Number(value.number); const details = await githubRequest<Record<string, unknown>>(await token(), `${base}/pulls/${number}`);
+      const headSha = String((details.head as { sha?: unknown })?.sha || "");
+      const [reviews, files, checks, statuses] = await Promise.all([
+        paged<Record<string, unknown>>(await token(), `${base}/pulls/${number}/reviews`, result => Array.isArray(result) ? result as Record<string, unknown>[] : []),
+        paged<Record<string, unknown>>(await token(), `${base}/pulls/${number}/files`, result => Array.isArray(result) ? result as Record<string, unknown>[] : []),
+        githubRequest<{ check_runs?: Record<string, unknown>[] }>(await token(), `${base}/commits/${encodeURIComponent(headSha)}/check-runs?per_page=100`),
+        githubRequest<{ statuses?: Record<string, unknown>[] }>(await token(), `${base}/commits/${encodeURIComponent(headSha)}/status?per_page=100`),
+      ]);
+      const reviewRows = Array.isArray(reviews) ? reviews : [];
+      const latestReviews = new Map<string, Record<string, unknown>>();
+      for (const review of reviewRows) { const login = String((review.user as { login?: unknown } | null)?.login || ""); if (login) latestReviews.set(login, review); }
+      const requested = Array.isArray(details.requested_reviewers) ? details.requested_reviewers.map(reviewer => String((reviewer as { login?: unknown }).login || "")) : [];
+      const checkRuns: GitHubCheckSnapshot[] = Array.isArray(checks.check_runs) ? checks.check_runs.map(check => ({ name: String(check.name || ""), status: String(check.status || ""), conclusion: typeof check.conclusion === "string" ? check.conclusion : null, detailsUrl: typeof check.html_url === "string" ? check.html_url : null })) : [];
+      const commitStatuses: GitHubCheckSnapshot[] = Array.isArray(statuses.statuses) ? statuses.statuses.map(status => ({ name: String(status.context || "commit status"), status: ["success", "failure", "error"].includes(String(status.state)) ? "completed" : "in_progress", conclusion: status.state === "success" ? "success" : status.state === "failure" || status.state === "error" ? "failure" : null, detailsUrl: typeof status.target_url === "string" ? status.target_url : null })) : [];
+      return { id: Number(details.id || value.id), number, title: String(details.title || value.title || ""), body: typeof details.body === "string" ? details.body : null, state: details.state === "closed" ? "closed" : "open", draft: Boolean(details.draft), sourceBranch: String((details.head as { ref?: unknown })?.ref || ""), targetBranch: String((details.base as { ref?: unknown })?.ref || ""), headSha, mergeSha: typeof details.merge_commit_sha === "string" ? details.merge_commit_sha : null, merged: Boolean(details.merged), mergeable: typeof details.mergeable === "boolean" ? details.mergeable : null, author: typeof (details.user as { login?: unknown } | null)?.login === "string" ? (details.user as { login: string }).login : null, reviewers: Array.from(new Set([...requested, ...latestReviews.keys()].filter(Boolean))), approvals: Array.from(latestReviews.values()).filter(review => review.state === "APPROVED").length, changedFiles: Array.isArray(files) ? files.map(changedFile).filter(file => file.filename) : [], checks: [...checkRuns, ...commitStatuses], htmlUrl: String(details.html_url || value.html_url || ""), createdAt: String(details.created_at || value.created_at || ""), updatedAt: String(details.updated_at || value.updated_at || ""), mergedAt: typeof details.merged_at === "string" ? details.merged_at : null } satisfies GitHubPullRequestSnapshot;
+    });
+  }
   return {
     repository,
     async listIssues() {
@@ -160,24 +192,22 @@ export function createGitHubReadAdapter(env: GitHubEnvironment): GitHubReadAdapt
       return raw.filter(value => !value.pull_request).map(value => ({ id: Number(value.id), number: Number(value.number), title: String(value.title || ""), body: typeof value.body === "string" ? value.body : null, state: value.state === "closed" ? "closed" : "open", labels: Array.isArray(value.labels) ? value.labels.map(label => String((label as { name?: unknown }).name || "")) : [], author: typeof (value.user as { login?: unknown } | null)?.login === "string" ? (value.user as { login: string }).login : null, htmlUrl: String(value.html_url || ""), createdAt: String(value.created_at || ""), updatedAt: String(value.updated_at || ""), closedAt: typeof value.closed_at === "string" ? value.closed_at : null }));
     },
     async listPullRequests() {
-      const rows = boundedPullRequests(await paged<Record<string, unknown>>(await token(), `${base}/pulls?state=all`, value => Array.isArray(value) ? value as Record<string, unknown>[] : []));
-      return mapWithConcurrency(rows, 8, async value => {
-        const number = Number(value.number); const details = await githubRequest<Record<string, unknown>>(await token(), `${base}/pulls/${number}`);
-        const headSha = String((details.head as { sha?: unknown })?.sha || "");
-        const [reviews, files, checks, statuses] = await Promise.all([
-          paged<Record<string, unknown>>(await token(), `${base}/pulls/${number}/reviews`, result => Array.isArray(result) ? result as Record<string, unknown>[] : []),
-          paged<Record<string, unknown>>(await token(), `${base}/pulls/${number}/files`, result => Array.isArray(result) ? result as Record<string, unknown>[] : []),
-          githubRequest<{ check_runs?: Record<string, unknown>[] }>(await token(), `${base}/commits/${encodeURIComponent(headSha)}/check-runs?per_page=100`),
-          githubRequest<{ statuses?: Record<string, unknown>[] }>(await token(), `${base}/commits/${encodeURIComponent(headSha)}/status?per_page=100`),
-        ]);
-        const reviewRows = Array.isArray(reviews) ? reviews : [];
-        const latestReviews = new Map<string, Record<string, unknown>>();
-        for (const review of reviewRows) { const login = String((review.user as { login?: unknown } | null)?.login || ""); if (login) latestReviews.set(login, review); }
-        const requested = Array.isArray(details.requested_reviewers) ? details.requested_reviewers.map(reviewer => String((reviewer as { login?: unknown }).login || "")) : [];
-        const checkRuns: GitHubCheckSnapshot[] = Array.isArray(checks.check_runs) ? checks.check_runs.map(check => ({ name: String(check.name || ""), status: String(check.status || ""), conclusion: typeof check.conclusion === "string" ? check.conclusion : null, detailsUrl: typeof check.html_url === "string" ? check.html_url : null })) : [];
-        const commitStatuses: GitHubCheckSnapshot[] = Array.isArray(statuses.statuses) ? statuses.statuses.map(status => ({ name: String(status.context || "commit status"), status: ["success", "failure", "error"].includes(String(status.state)) ? "completed" : "in_progress", conclusion: status.state === "success" ? "success" : status.state === "failure" || status.state === "error" ? "failure" : null, detailsUrl: typeof status.target_url === "string" ? status.target_url : null })) : [];
-        return { id: Number(details.id || value.id), number, title: String(details.title || value.title || ""), body: typeof details.body === "string" ? details.body : null, state: details.state === "closed" ? "closed" : "open", draft: Boolean(details.draft), sourceBranch: String((details.head as { ref?: unknown })?.ref || ""), targetBranch: String((details.base as { ref?: unknown })?.ref || ""), headSha, mergeSha: typeof details.merge_commit_sha === "string" ? details.merge_commit_sha : null, merged: Boolean(details.merged), mergeable: typeof details.mergeable === "boolean" ? details.mergeable : null, author: typeof (details.user as { login?: unknown } | null)?.login === "string" ? (details.user as { login: string }).login : null, reviewers: Array.from(new Set([...requested, ...latestReviews.keys()].filter(Boolean))), approvals: Array.from(latestReviews.values()).filter(review => review.state === "APPROVED").length, changedFiles: Array.isArray(files) ? files.map(changedFile).filter(file => file.filename) : [], checks: [...checkRuns, ...commitStatuses], htmlUrl: String(details.html_url || value.html_url || ""), createdAt: String(details.created_at || value.created_at || ""), updatedAt: String(details.updated_at || value.updated_at || ""), mergedAt: typeof details.merged_at === "string" ? details.merged_at : null } satisfies GitHubPullRequestSnapshot;
-      });
+      return enrichPullRequests(boundedPullRequests(await pullRequestRows("all", 1, MAX_SYNC_PULL_REQUESTS)));
+    },
+    async listScheduledPullRequests(cursor, trackedPullRequestNumbers = []) {
+      if (cursor.scope === "tracked") {
+        const items = await enrichPullRequests(trackedPullRequestNumbers.slice(0, SCHEDULED_PR_BATCH_SIZE).map(number => ({ number })));
+        const cycleComplete = trackedPullRequestNumbers.length < SCHEDULED_PR_BATCH_SIZE;
+        return { items, nextCursor: cycleComplete ? initialPullRequestCursor() : { scope: "tracked", page: cursor.page + 1 }, cycleComplete };
+      }
+      const rows = await pullRequestRows(cursor.scope === "open" ? "open" : "closed", cursor.page, SCHEDULED_PR_BATCH_SIZE);
+      if (cursor.scope === "open") {
+        return { items: await enrichPullRequests(rows), nextCursor: rows.length < SCHEDULED_PR_BATCH_SIZE ? { scope: "recent_closed", page: 1 } : { scope: "open", page: cursor.page + 1 }, cycleComplete: false };
+      }
+      const cutoff = Date.now() - RECENT_CLOSED_PR_DAYS * 24 * 60 * 60 * 1000;
+      const recentRows = rows.filter(value => Date.parse(String(value.updated_at || "")) >= cutoff);
+      const exhausted = rows.length < SCHEDULED_PR_BATCH_SIZE || recentRows.length < rows.length;
+      return { items: await enrichPullRequests(recentRows), nextCursor: exhausted ? { scope: "tracked", page: 1 } : { scope: "recent_closed", page: cursor.page + 1 }, cycleComplete: false };
     },
     async listBranches() {
       const rows = await paged<Record<string, unknown>>(await token(), `${base}/branches`, value => Array.isArray(value) ? value as Record<string, unknown>[] : []);

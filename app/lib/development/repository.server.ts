@@ -50,7 +50,7 @@ function queryParts(filters: DevelopmentFilters) {
   }
   if (filters.attention === "ci_failing") {
     where.push(
-      "EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure', 'cancelled', 'timed_out', 'action_required'))",
+      "EXISTS (SELECT 1 FROM development_links l JOIN github_sync_items g ON g.kind = 'pull_request' AND g.number = CAST(l.external_id AS INTEGER), json_each(g.payload_json, '$.checks') c WHERE l.development_request_id = r.id AND l.provider = 'github' AND l.type = 'pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure', 'cancelled', 'timed_out', 'action_required'))",
     );
   }
   if (filters.attention === "unknown_sync") {
@@ -73,7 +73,7 @@ function queryParts(filters: DevelopmentFilters) {
     main_verify: "r.overall_status = 'on_main_needs_verification'",
     blocked: "r.overall_status = 'blocked'",
     ci_failing:
-      "EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure', 'cancelled', 'timed_out', 'action_required'))",
+      "EXISTS (SELECT 1 FROM development_links l JOIN github_sync_items g ON g.kind = 'pull_request' AND g.number = CAST(l.external_id AS INTEGER), json_each(g.payload_json, '$.checks') c WHERE l.development_request_id = r.id AND l.provider = 'github' AND l.type = 'pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure', 'cancelled', 'timed_out', 'action_required'))",
     sync_unknown:
       "EXISTS (SELECT 1 FROM development_branch_states s WHERE s.development_request_id = r.id AND s.state = 'unknown')",
     verified: "r.overall_status = 'verified'",
@@ -99,15 +99,15 @@ export async function listDevelopmentRequests(
         r.*,
         issue.url AS issue_url,
         pr.url AS pr_url,
-        (SELECT number FROM github_sync_items g WHERE g.development_request_id = r.id AND g.kind = 'issue' ORDER BY number LIMIT 1) AS issue_number,
-        (SELECT number FROM github_sync_items g WHERE g.development_request_id = r.id AND g.kind = 'pull_request' ORDER BY number DESC LIMIT 1) AS pr_number,
-        (SELECT state FROM github_sync_items g WHERE g.development_request_id = r.id AND g.kind = 'pull_request' ORDER BY number DESC LIMIT 1) AS pr_state,
-        (SELECT json_extract(payload_json, '$.sourceBranch') FROM github_sync_items g WHERE g.development_request_id = r.id AND g.kind = 'pull_request' ORDER BY number DESC LIMIT 1) AS source_branch,
-        (SELECT json_extract(payload_json, '$.targetBranch') FROM github_sync_items g WHERE g.development_request_id = r.id AND g.kind = 'pull_request' ORDER BY number DESC LIMIT 1) AS target_branch,
+        (SELECT CAST(l.external_id AS INTEGER) FROM development_links l WHERE l.development_request_id = r.id AND l.provider = 'github' AND l.type = 'issue' ORDER BY CAST(l.external_id AS INTEGER) LIMIT 1) AS issue_number,
+        (SELECT CAST(l.external_id AS INTEGER) FROM development_links l WHERE l.development_request_id = r.id AND l.provider = 'github' AND l.type = 'pull_request' ORDER BY CAST(l.external_id AS INTEGER) DESC LIMIT 1) AS pr_number,
+        (SELECT g.state FROM development_links l JOIN github_sync_items g ON g.kind = 'pull_request' AND g.number = CAST(l.external_id AS INTEGER) WHERE l.development_request_id = r.id AND l.provider = 'github' AND l.type = 'pull_request' ORDER BY g.number DESC LIMIT 1) AS pr_state,
+        (SELECT json_extract(g.payload_json, '$.sourceBranch') FROM development_links l JOIN github_sync_items g ON g.kind = 'pull_request' AND g.number = CAST(l.external_id AS INTEGER) WHERE l.development_request_id = r.id AND l.provider = 'github' AND l.type = 'pull_request' ORDER BY g.number DESC LIMIT 1) AS source_branch,
+        (SELECT json_extract(g.payload_json, '$.targetBranch') FROM development_links l JOIN github_sync_items g ON g.kind = 'pull_request' AND g.number = CAST(l.external_id AS INTEGER) WHERE l.development_request_id = r.id AND l.provider = 'github' AND l.type = 'pull_request' ORDER BY g.number DESC LIMIT 1) AS target_branch,
         CASE
-          WHEN EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure','cancelled','timed_out','action_required')) THEN 'CI Failing'
-          WHEN EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request' AND json_extract(c.value, '$.status') <> 'completed') THEN 'CI Pending'
-          WHEN EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request') THEN 'CI Passed'
+          WHEN EXISTS (SELECT 1 FROM development_links l JOIN github_sync_items g ON g.kind = 'pull_request' AND g.number = CAST(l.external_id AS INTEGER), json_each(g.payload_json, '$.checks') c WHERE l.development_request_id = r.id AND l.provider = 'github' AND l.type = 'pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure','cancelled','timed_out','action_required')) THEN 'CI Failing'
+          WHEN EXISTS (SELECT 1 FROM development_links l JOIN github_sync_items g ON g.kind = 'pull_request' AND g.number = CAST(l.external_id AS INTEGER), json_each(g.payload_json, '$.checks') c WHERE l.development_request_id = r.id AND l.provider = 'github' AND l.type = 'pull_request' AND json_extract(c.value, '$.status') <> 'completed') THEN 'CI Pending'
+          WHEN EXISTS (SELECT 1 FROM development_links l JOIN github_sync_items g ON g.kind = 'pull_request' AND g.number = CAST(l.external_id AS INTEGER), json_each(g.payload_json, '$.checks') c WHERE l.development_request_id = r.id AND l.provider = 'github' AND l.type = 'pull_request') THEN 'CI Passed'
           ELSE 'CI Unknown'
         END AS ci_state,
         COALESCE(adam.state, 'unknown') AS adam_state,
@@ -124,21 +124,21 @@ export async function listDevelopmentRequests(
         COALESCE(main_branch.state, 'unknown') AS main_state,
         CASE
           WHEN r.overall_status = 'blocked' THEN 'Resolve blocker'
-          WHEN EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure','cancelled','timed_out','action_required')) THEN 'Fix failing CI'
+          WHEN EXISTS (SELECT 1 FROM development_links l JOIN github_sync_items g ON g.kind='pull_request' AND g.number=CAST(l.external_id AS INTEGER), json_each(g.payload_json, '$.checks') c WHERE l.development_request_id=r.id AND l.provider='github' AND l.type='pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure','cancelled','timed_out','action_required')) THEN 'Fix failing CI'
           WHEN r.overall_status = 'awaiting_adam' THEN 'Adam: QA required'
           WHEN r.overall_status = 'awaiting_joe' THEN 'Joe: QA required'
           WHEN r.overall_status = 'awaiting_mutual_approval' THEN 'Mutual approval'
           WHEN r.overall_status = 'ready_for_dev' THEN 'Ready for Dev'
           WHEN r.overall_status = 'ready_for_main' THEN 'Ready for Main'
           WHEN r.overall_status = 'on_main_needs_verification' THEN 'Verify production'
-          WHEN NOT EXISTS (SELECT 1 FROM github_sync_items p WHERE p.development_request_id = r.id AND p.kind = 'pull_request')
-            AND EXISTS (SELECT 1 FROM github_sync_items i WHERE i.development_request_id = r.id AND i.kind = 'issue')
+          WHEN NOT EXISTS (SELECT 1 FROM development_links p WHERE p.development_request_id=r.id AND p.provider='github' AND p.type='pull_request')
+            AND EXISTS (SELECT 1 FROM development_links i WHERE i.development_request_id=r.id AND i.provider='github' AND i.type='issue')
             AND r.owner_email IS NULL AND r.product_area IS NULL THEN 'Needs triage'
-          WHEN NOT EXISTS (SELECT 1 FROM github_sync_items p WHERE p.development_request_id = r.id AND p.kind = 'pull_request')
-            AND EXISTS (SELECT 1 FROM github_sync_items i WHERE i.development_request_id = r.id AND i.kind = 'issue')
+          WHEN NOT EXISTS (SELECT 1 FROM development_links p WHERE p.development_request_id=r.id AND p.provider='github' AND p.type='pull_request')
+            AND EXISTS (SELECT 1 FROM development_links i WHERE i.development_request_id=r.id AND i.provider='github' AND i.type='issue')
             AND r.owner_email IS NULL THEN 'Needs implementation owner'
-          WHEN NOT EXISTS (SELECT 1 FROM github_sync_items p WHERE p.development_request_id = r.id AND p.kind = 'pull_request')
-            AND EXISTS (SELECT 1 FROM github_sync_items i WHERE i.development_request_id = r.id AND i.kind = 'issue') THEN 'Needs branch / PR'
+          WHEN NOT EXISTS (SELECT 1 FROM development_links p WHERE p.development_request_id=r.id AND p.provider='github' AND p.type='pull_request')
+            AND EXISTS (SELECT 1 FROM development_links i WHERE i.development_request_id=r.id AND i.provider='github' AND i.type='issue') THEN 'Needs branch / PR'
           ELSE COALESCE(r.next_action, 'Review status')
         END AS next_action
       FROM development_requests r
@@ -184,7 +184,7 @@ export async function getDevelopmentSummary(db: DevelopmentDatabase) {
         SUM(CASE WHEN overall_status = 'on_main_needs_verification' THEN 1 ELSE 0 END) AS onMainNeedsVerification,
         SUM(CASE WHEN overall_status = 'blocked' THEN 1 ELSE 0 END) AS blocked,
         SUM(CASE WHEN overall_status = 'verified' THEN 1 ELSE 0 END) AS verified,
-        SUM(CASE WHEN EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = development_requests.id AND json_extract(c.value, '$.conclusion') IN ('failure','cancelled','timed_out','action_required')) THEN 1 ELSE 0 END) AS ciFailing,
+        SUM(CASE WHEN EXISTS (SELECT 1 FROM development_links l JOIN github_sync_items g ON g.kind='pull_request' AND g.number=CAST(l.external_id AS INTEGER), json_each(g.payload_json, '$.checks') c WHERE l.development_request_id=development_requests.id AND l.provider='github' AND l.type='pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure','cancelled','timed_out','action_required')) THEN 1 ELSE 0 END) AS ciFailing,
         SUM(CASE WHEN EXISTS (SELECT 1 FROM development_branch_states s WHERE s.development_request_id = development_requests.id AND s.state = 'unknown') THEN 1 ELSE 0 END) AS unknownSync
       FROM development_requests
     `,
@@ -217,21 +217,21 @@ export async function getDevelopmentRequest(
       `SELECT r.*,
       CASE
         WHEN r.overall_status = 'blocked' THEN 'Resolve blocker'
-        WHEN EXISTS (SELECT 1 FROM github_sync_items g, json_each(g.payload_json, '$.checks') c WHERE g.development_request_id = r.id AND g.kind = 'pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure','cancelled','timed_out','action_required')) THEN 'Fix failing CI'
+        WHEN EXISTS (SELECT 1 FROM development_links l JOIN github_sync_items g ON g.kind='pull_request' AND g.number=CAST(l.external_id AS INTEGER), json_each(g.payload_json, '$.checks') c WHERE l.development_request_id=r.id AND l.provider='github' AND l.type='pull_request' AND json_extract(c.value, '$.conclusion') IN ('failure','cancelled','timed_out','action_required')) THEN 'Fix failing CI'
         WHEN r.overall_status = 'awaiting_adam' THEN 'Adam: QA required'
         WHEN r.overall_status = 'awaiting_joe' THEN 'Joe: QA required'
         WHEN r.overall_status = 'awaiting_mutual_approval' THEN 'Mutual approval'
         WHEN r.overall_status = 'ready_for_dev' THEN 'Ready for Dev'
         WHEN r.overall_status = 'ready_for_main' THEN 'Ready for Main'
         WHEN r.overall_status = 'on_main_needs_verification' THEN 'Verify production'
-        WHEN NOT EXISTS (SELECT 1 FROM github_sync_items p WHERE p.development_request_id = r.id AND p.kind = 'pull_request')
-          AND EXISTS (SELECT 1 FROM github_sync_items i WHERE i.development_request_id = r.id AND i.kind = 'issue')
+        WHEN NOT EXISTS (SELECT 1 FROM development_links p WHERE p.development_request_id=r.id AND p.provider='github' AND p.type='pull_request')
+          AND EXISTS (SELECT 1 FROM development_links i WHERE i.development_request_id=r.id AND i.provider='github' AND i.type='issue')
           AND r.owner_email IS NULL AND r.product_area IS NULL THEN 'Needs triage'
-        WHEN NOT EXISTS (SELECT 1 FROM github_sync_items p WHERE p.development_request_id = r.id AND p.kind = 'pull_request')
-          AND EXISTS (SELECT 1 FROM github_sync_items i WHERE i.development_request_id = r.id AND i.kind = 'issue')
+        WHEN NOT EXISTS (SELECT 1 FROM development_links p WHERE p.development_request_id=r.id AND p.provider='github' AND p.type='pull_request')
+          AND EXISTS (SELECT 1 FROM development_links i WHERE i.development_request_id=r.id AND i.provider='github' AND i.type='issue')
           AND r.owner_email IS NULL THEN 'Needs implementation owner'
-        WHEN NOT EXISTS (SELECT 1 FROM github_sync_items p WHERE p.development_request_id = r.id AND p.kind = 'pull_request')
-          AND EXISTS (SELECT 1 FROM github_sync_items i WHERE i.development_request_id = r.id AND i.kind = 'issue') THEN 'Needs branch / PR'
+        WHEN NOT EXISTS (SELECT 1 FROM development_links p WHERE p.development_request_id=r.id AND p.provider='github' AND p.type='pull_request')
+          AND EXISTS (SELECT 1 FROM development_links i WHERE i.development_request_id=r.id AND i.provider='github' AND i.type='issue') THEN 'Needs branch / PR'
         ELSE COALESCE(r.next_action, 'Review status')
       END AS next_action
       FROM development_requests r WHERE r.id = ?`,
@@ -274,7 +274,7 @@ export async function getDevelopmentRequest(
         .all<ActivityEvent>(),
       db
         .prepare(
-          "SELECT id, kind, number, title, state, payload_json, github_updated_at FROM github_sync_items WHERE development_request_id = ? ORDER BY github_updated_at DESC, id DESC",
+          "SELECT DISTINCT g.id, g.kind, g.number, g.title, g.state, g.payload_json, g.github_updated_at FROM development_links l JOIN github_sync_items g ON g.kind = l.type AND g.number = CAST(l.external_id AS INTEGER) WHERE l.development_request_id = ? AND l.provider = 'github' ORDER BY g.github_updated_at DESC, g.id DESC",
         )
         .bind(id)
         .all<DevelopmentGitHubItem>(),
