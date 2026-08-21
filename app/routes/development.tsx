@@ -418,6 +418,7 @@ export default function Development({
         <Link aria-current="page" to="/development">
           Requests
         </Link>
+        <Link to="/development/branch-sync">Branch Sync</Link>
         <Link to="/development/environments">Environments &amp; QA</Link>
         <Link to="/development/console">Development Console</Link>
       </nav>

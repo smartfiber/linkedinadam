@@ -238,6 +238,7 @@ export default function DevelopmentEnvironments({
 
       <nav className="development-subnav" aria-label="Development navigation">
         <Link to="/development">Requests</Link>
+        <Link to="/development/branch-sync">Branch Sync</Link>
         <Link aria-current="page" to="/development/environments">
           Environments &amp; QA
         </Link>

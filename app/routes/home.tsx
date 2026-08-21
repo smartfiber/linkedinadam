@@ -20,6 +20,7 @@ import { agentControlSummary } from "../lib/agents/service.server";
 import { getAgentControlPlaneStatus } from "../lib/agents/readiness.server";
 import { getEnvironmentQaSummary } from "../lib/development/environments.server";
 import { getEnvironmentQaReadiness } from "../lib/development/environment-readiness.server";
+import { getBranchMappings, listBranchSyncRows, summarizeBranchSync } from "../lib/development/branch-sync.server";
 
 type Employee = {
   id: number;
@@ -359,7 +360,9 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     .all<DailyHomeDraft>();
   const environmentQaReadiness = await getEnvironmentQaReadiness(env.linkedinadam_db);
   if (environmentQaReadiness.state === "ERROR") throw environmentQaReadiness.error;
-  const [developmentSummary, developmentAttention, environmentQaSummary, agentStatus] = await Promise.all([getDevelopmentSummary(env.linkedinadam_db), listNeedsAttention(env.linkedinadam_db, user.email), environmentQaReadiness.state === "READY" ? getEnvironmentQaSummary(env.linkedinadam_db) : Promise.resolve({ needsAdam: 0, needsJoe: 0, failedRetest: 0, readyForDev: 0 }), getAgentControlPlaneStatus(env.linkedinadam_db)]);
+  const [developmentSummary, developmentAttention, environmentQaSummary, branchRows, branchMappings, agentStatus] = await Promise.all([getDevelopmentSummary(env.linkedinadam_db), listNeedsAttention(env.linkedinadam_db, user.email), environmentQaReadiness.state === "READY" ? getEnvironmentQaSummary(env.linkedinadam_db) : Promise.resolve({ needsAdam: 0, needsJoe: 0, failedRetest: 0, readyForDev: 0 }), listBranchSyncRows(env.linkedinadam_db), getBranchMappings(env.linkedinadam_db), getAgentControlPlaneStatus(env.linkedinadam_db)]);
+  const joeMapping = branchMappings.find((mapping) => mapping.role === "joe");
+  const branchSyncSummary = summarizeBranchSync(branchRows, joeMapping?.status === "MAPPED" && Boolean(joeMapping.branchName));
   if (agentStatus.state === "ERROR") throw agentStatus.error;
   const agentSummary = agentStatus.state === "READY"
     ? await agentControlSummary(env.linkedinadam_db)
@@ -379,6 +382,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     developmentAttention: developmentAttention.results || [],
     environmentQaSummary,
     environmentQaInitialized: environmentQaReadiness.state === "READY",
+    branchSyncSummary,
     agentSummary,
     agentControlPlaneReady: agentStatus.state === "READY",
     user,
@@ -1829,6 +1833,7 @@ export default function Home({
   const developmentSummary = loaderData.developmentSummary;
   const environmentQaSummary = loaderData.environmentQaSummary;
   const environmentQaInitialized = loaderData.environmentQaInitialized;
+  const branchSyncSummary = loaderData.branchSyncSummary;
   const developmentAttention = loaderData.developmentAttention;
   const agentSummary = loaderData.agentSummary;
   const agentControlPlaneReady = loaderData.agentControlPlaneReady;
@@ -1888,6 +1893,11 @@ export default function Home({
         <section className="command-environment-qa panel">
           <div className="panel-heading"><div><p className="eyebrow">ENVIRONMENT QA</p><h2>Independent verification</h2></div><a className="secondary-link" href="/development/environments">Open Environments &amp; QA</a></div>
           {environmentQaInitialized ? <div className="command-agent-metrics">{[["Needs Adam", environmentQaSummary.needsAdam, "needs-adam"], ["Needs Joe", environmentQaSummary.needsJoe, "needs-joe"], ["Failed / Retest", environmentQaSummary.failedRetest, "failed-retest"], ["Ready for Dev", environmentQaSummary.readyForDev, "ready-dev"]].map(([label, value, anchor]) => <a href={`/development/environments#${anchor}`} key={label}><span>{label}</span><strong>{value}</strong></a>)}</div> : <p className="empty-state">Environment QA awaiting database initialization.</p>}
+        </section>
+
+        <section className="command-branch-sync panel">
+          <div className="panel-heading"><div><p className="eyebrow">BRANCH SYNC</p><h2>Promotion readiness</h2></div><a className="secondary-link" href="/development/branch-sync">Open Branch Sync</a></div>
+          <div className="command-agent-metrics">{[["Adam only", branchSyncSummary.adamOnly, "adam-only"], ["Joe only", branchSyncSummary.joeOnly, "joe-only"], ["Dev not Main", branchSyncSummary.devMain, "dev-main"], ["Main needs verification", branchSyncSummary.mainVerify, "main-verify"], ["Mapping required", branchSyncSummary.mappingRequired, "mapping-required"]].map(([label, value, view]) => <a href={`/development/branch-sync?view=${view}`} key={label}><span>{label}</span><strong>{value}</strong></a>)}</div>
         </section>
 
         <section className="command-agents panel">

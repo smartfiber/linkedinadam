@@ -1213,6 +1213,40 @@ button.secondary {
 .request-environment-table th,
 .request-environment-table td { padding: 8px; border-bottom: 1px solid #e6ebf2; text-align: left; vertical-align: top; }
 .request-environment-table th { color: #69758c; font-size: 9px; text-transform: uppercase; }
+.branch-mapping-summary { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.branch-mapping-summary span { display: grid; gap: 2px; min-width: 78px; padding: 7px 9px; border: 1px solid #dfe5ed; border-radius: 6px; color: #526079; background: #fff; font-size: 10px; }
+.branch-mapping-summary strong { color: #172033; text-transform: uppercase; }
+.branch-mapping-warning { max-width: 1800px; margin: 0 auto 10px; }
+.branch-mapping-warning p { margin-bottom: 0; color: #69758c; font-size: 11px; }
+.branch-summary { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 5px; max-width: 1800px; margin: 0 auto 10px; }
+.branch-summary a { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; padding: 8px 9px; border: 1px solid #dfe5ed; border-radius: 6px; color: #526079; background: #fff; text-decoration: none; }
+.branch-summary a.active { border-color: #7bc9a5; background: #e9f7f0; }
+.branch-summary span { overflow: hidden; font-size: 9px; font-weight: 800; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.branch-summary strong { color: #172033; font-size: 16px; }
+.branch-sync-toolbar { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; justify-content: space-between; gap: 10px; max-width: 1800px; margin: 0 auto; padding: 7px 9px; border: 1px solid #dfe5ed; border-bottom: 0; border-radius: 7px 7px 0 0; background: #fff; }
+.branch-sync-toolbar nav { display: flex; gap: 4px; }
+.branch-sync-toolbar a { padding: 6px 8px; border-radius: 5px; color: #526079; font-size: 10px; font-weight: 800; text-decoration: none; }
+.branch-sync-toolbar a.active { color: #176c4a; background: #e9f7f0; }
+.branch-sync-toolbar > span { color: #69758c; font-size: 10px; }
+.branch-matrix-wrap { max-width: 1800px; margin: 0 auto; overflow-x: auto; border: 1px solid #dfe5ed; background: #fff; }
+.branch-matrix { width: 100%; min-width: 1420px; border-collapse: separate; border-spacing: 0; font-size: 10px; }
+.branch-matrix th { position: sticky; top: 45px; z-index: 2; padding: 7px; border-bottom: 1px solid #dfe5ed; color: #69758c; background: #f5f7fa; text-align: left; text-transform: uppercase; }
+.branch-matrix td { padding: 8px 7px; border-bottom: 1px solid #edf0f5; vertical-align: top; }
+.branch-matrix td:first-child, .branch-matrix th:first-child { position: sticky; left: 0; z-index: 1; min-width: 220px; background: #fff; }
+.branch-matrix th:first-child { z-index: 3; background: #f5f7fa; }
+.branch-request-cell > a { display: block; color: #172033; font-weight: 800; text-decoration: none; }
+.branch-request-cell > small { display: block; margin-top: 2px; color: #7b879a; }
+.branch-request-cell details { margin-top: 5px; color: #526079; }
+.branch-request-cell summary { cursor: pointer; font-size: 9px; font-weight: 800; }
+.branch-difference-detail { width: 320px; padding: 7px; border: 1px solid #dfe5ed; border-radius: 5px; background: #f8fafc; }
+.branch-difference-detail p { margin: 3px 0; overflow-wrap: anywhere; }
+.branch-matrix td:nth-child(2) a { display: block; margin-bottom: 4px; color: #1675e7; }
+.branch-matrix .development-status { display: grid; gap: 1px; }
+.branch-matrix .development-status small { font-size: 7px; }
+.branch-confidence { font-size: 9px; font-weight: 800; }
+.branch-next-action { min-width: 150px; color: #172033; }
+.branch-qa-state { min-width: 125px; }
+.branch-qa-state > span:not(.development-status) { display: block; margin-bottom: 3px; color: #526079; font-size: 9px; }
 
 @media (max-width: 1100px) {
   .development-summary-grid { grid-template-columns: repeat(4, 1fr); }
@@ -1237,6 +1271,7 @@ button.secondary {
   .environment-summary { grid-template-columns: 1fr 1fr; }
   .environment-qa-card dl { grid-template-columns: 1fr 1fr; }
   .environment-result-form { grid-template-columns: 1fr; }
+  .branch-summary { grid-template-columns: repeat(4, 1fr); }
 }
 
 @media (max-width: 520px) {
@@ -1245,6 +1280,9 @@ button.secondary {
   .environment-qa-card dl { grid-template-columns: 1fr; }
   .development-subnav { overflow-x: auto; }
   .development-subnav a { white-space: nowrap; }
+  .branch-summary { grid-template-columns: repeat(2, 1fr); }
+  .branch-mapping-summary { justify-content: flex-start; }
+  .branch-sync-toolbar { align-items: flex-start; flex-direction: column; }
 }
 
 /* Connection growth workspace */
