@@ -66,6 +66,14 @@ export default function DevelopmentConsole({
           Development
         </Link>
       </header>
+      <nav className="development-subnav" aria-label="Development navigation">
+        <Link to="/development">Requests</Link>
+        <Link to="/development/branch-sync">Branch Sync</Link>
+        <Link to="/development/environments">Environments &amp; QA</Link>
+        <Link aria-current="page" to="/development/console">
+          Development Console
+        </Link>
+      </nav>
       <section className="console-shell">
         <div className="console-banner">
           <span className="development-status attention">

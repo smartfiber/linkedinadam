@@ -7,6 +7,7 @@ import {
 export default [
   index("routes/home.tsx"),
   route("development", "routes/development.tsx"),
+  route("development/branch-sync", "routes/development-branch-sync.tsx"),
   route("development/environments", "routes/development-environments.tsx"),
   route("development/console", "routes/development-console.tsx"),
   route("agents", "routes/agents.tsx"),
