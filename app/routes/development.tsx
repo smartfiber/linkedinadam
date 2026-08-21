@@ -1,4 +1,5 @@
 import { Form, Link, useNavigation } from "react-router";
+import { useEffect, useRef, useState } from "react";
 import type { Route } from "./+types/development";
 import { QaHandoffCard } from "../components/QaHandoffCard";
 import { DevelopmentAttachmentPicker } from "../components/DevelopmentAttachmentPicker";
@@ -216,25 +217,22 @@ export async function action({ request, context }: Route.ActionArgs) {
   }
 
   if (intent === "create_request") {
-    const id = await createDevelopmentRequest(env.linkedinadam_db, user, {
-      title: String(formData.get("title") || ""),
-      problem: String(formData.get("problem") || ""),
-      whyDecision: String(formData.get("why_decision") || ""),
-      priority: String(formData.get("priority") || "P2"),
-      type: String(formData.get("type") || "Other"),
-      productArea: String(formData.get("product_area") || ""),
-      ownerEmail: String(formData.get("owner_email") || ""),
-      qaPartnerEmail: String(formData.get("qa_partner_email") || ""),
-      notes: String(formData.get("notes") || ""),
-      requestedBy: String(formData.get("requested_by") || ""),
-      issueUrl: String(formData.get("issue_url") || ""),
-      prUrl: String(formData.get("pr_url") || ""),
-      branch: String(formData.get("branch") || ""),
-    });
-    const initialized = await initializeCopilotRequest(env.linkedinadam_db, id, user);
-    const files = formData.getAll("attachments").filter((value): value is File => value instanceof File && value.size > 0);
-    if (initialized && files.length) await saveDevelopmentAttachments(env, user, id, files, { caption: String(formData.get("attachment_caption") || ""), category: String(formData.get("attachment_category") || "Other") });
-    return { ok: true, requestId: id };
+    let id: string;
+    try {
+      id = await createDevelopmentRequest(env.linkedinadam_db, user, {
+        title: String(formData.get("title") || ""), problem: String(formData.get("problem") || ""), whyDecision: String(formData.get("why_decision") || ""), priority: String(formData.get("priority") || "P2"), type: String(formData.get("type") || "Other"), productArea: String(formData.get("product_area") || ""), ownerEmail: String(formData.get("owner_email") || ""), qaPartnerEmail: String(formData.get("qa_partner_email") || ""), notes: String(formData.get("notes") || ""), requestedBy: String(formData.get("requested_by") || ""), issueUrl: String(formData.get("issue_url") || ""), prUrl: String(formData.get("pr_url") || ""), branch: String(formData.get("branch") || ""),
+      });
+    } catch(error) {
+      return { error: error instanceof Error ? error.message : "Unable to create Development Request.", intent: "create_request" };
+    }
+    try {
+      const initialized = await initializeCopilotRequest(env.linkedinadam_db, id, user);
+      const files = formData.getAll("attachments").filter((value): value is File => value instanceof File && value.size > 0);
+      if (initialized && files.length) await saveDevelopmentAttachments(env, user, id, files, { caption: String(formData.get("attachment_caption") || ""), category: String(formData.get("attachment_category") || "Other") });
+      return { ok: true, requestId: id, intent: "create_request" };
+    } catch(error) {
+      return { ok: true, requestId: id, intent: "create_request", message: error instanceof Error ? `Development Request created, but attachment/Copilot initialization needs attention: ${error.message}` : "Development Request created, but attachment/Copilot initialization needs attention." };
+    }
   }
 
   const requestId = String(formData.get("request_id") || "");
@@ -388,6 +386,14 @@ export default function Development({
 }: Route.ComponentProps) {
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
+  const pendingIntent=String(navigation.formData?.get("intent")||"");
+  const pendingRequestId=String(navigation.formData?.get("request_id")||"");
+  const isPending=(intent:string,requestId?:string)=>busy&&pendingIntent===intent&&(!requestId||pendingRequestId===requestId);
+  const composerRef=useRef<HTMLDetailsElement>(null);
+  const createFormRef=useRef<HTMLFormElement>(null);
+  const currentPromptRef=useRef<HTMLElement>(null);
+  const resetRequestRef=useRef("");
+  const [attachmentResetKey,setAttachmentResetKey]=useState(0);
   const {
     summary,
     requests,
@@ -423,6 +429,12 @@ export default function Development({
   if(currentPrompt?.evidence_snapshot_json&&detail){try{const snapshot=JSON.parse(currentPrompt.evidence_snapshot_json);branchPromptChanged=(["adam","joe","dev","main"] as const).some(branch=>{const current=(detail.branches as any[]).find(item=>item.branch===branch);return snapshot[branch]?.sha!==(current?.commit_sha||null)||snapshot[branch]?.checkedAt!==(current?.checked_at||null);});}catch{branchPromptChanged=true;}}
   const readiness = detail ? mergeReadiness({ci:ciFromPayload(pullRequestPayload),mergeable:pullRequestPayload?.mergeable,conflict:detail.branches.some((branch:any)=>branch.state==="conflict"),stale:detail.branches.some((branch:any)=>!branch.checked_at),adamQa:(detail.qa as any[]).find((q:any)=>q.stage==="ADAM_QA")?.status,joeQa:(detail.qa as any[]).find((q:any)=>q.stage==="JOE_QA")?.status,devQa:(detail.qa as any[]).find((q:any)=>q.stage==="DEV_QA")?.status,mainVerification:(detail.qa as any[]).find((q:any)=>q.stage==="MAIN_VERIFICATION")?.status,approvals:detail.approvals.length}) : null;
 
+  useEffect(()=>{
+    if(actionData?.requestId&&resetRequestRef.current!==actionData.requestId){resetRequestRef.current=actionData.requestId;createFormRef.current?.reset();setAttachmentResetKey(value=>value+1);}
+  },[actionData?.requestId]);
+  useEffect(()=>{if(actionData?.message?.includes("prompt version"))currentPromptRef.current?.scrollIntoView({behavior:"smooth",block:"nearest"});},[actionData?.message]);
+  function openComposer(){if(composerRef.current){composerRef.current.open=true;composerRef.current.scrollIntoView({behavior:"smooth",block:"start"});requestAnimationFrame(()=>composerRef.current?.querySelector<HTMLTextAreaElement>('textarea[name="title"]')?.focus());}}
+
   return (
     <main className="development-page">
       <header className="development-header">
@@ -442,9 +454,9 @@ export default function Development({
                 ? `GitHub ${github.lastRun?.freshness?.replaceAll("_", " ") || "connected"}`
                 : "GitHub not connected"}
           </span>
-          <a className="secondary-link" href="#new-request">
-            New Request
-          </a>
+          <button className="button-link new-request-trigger" type="button" onClick={openComposer}>
+            New Development Request
+          </button>
           <Link className="secondary-link" to="/development/environments">
             Environments &amp; QA
           </Link>
@@ -925,7 +937,7 @@ export default function Development({
       </section>
 
       <div className="development-lower-grid">
-        <details className="panel new-request-panel" id="new-request">
+        <details ref={composerRef} className="panel new-request-panel" id="new-request">
           <summary>
             <span>
               <strong>New development request</strong>
@@ -939,15 +951,16 @@ export default function Development({
               <h2>New request</h2>
             </div>
           </div>
-          <Form method="post" encType="multipart/form-data" className="development-form quick-request-form">
+          {actionData?.requestId ? <p className="form-message success" role="status">{actionData.message || "Development Request created."} <Link to={`/development?request=${actionData.requestId}`}>Open Request</Link></p> : actionData?.intent === "create_request" && actionData.error ? <p className="form-message error" role="alert">{actionData.error}</p> : null}
+          <Form ref={createFormRef} method="post" encType="multipart/form-data" autoComplete="off" className="development-form quick-request-form" aria-busy={isPending("create_request")}>
             <input type="hidden" name="intent" value="create_request" />
             <label>
               Request / Idea
-              <textarea required name="title" rows={5} placeholder="Describe the idea or bug in your own words…" />
+              <textarea required name="title" rows={9} placeholder="Describe the idea or bug in your own words…" />
             </label>
             <fieldset className="attachment-composer">
               <legend>Screenshots / Attachments</legend>
-              <DevelopmentAttachmentPicker />
+              <DevelopmentAttachmentPicker resetKey={attachmentResetKey} />
               <div className="form-grid"><label>Category<select name="attachment_category" defaultValue="Other">{["Current Behavior","Desired Behavior","Error","Reference","Other"].map(value=><option key={value}>{value}</option>)}</select></label><label>Caption<input name="attachment_caption" /></label></div>
             </fieldset>
             <div className="form-grid">
@@ -1010,9 +1023,10 @@ export default function Development({
               <textarea name="notes" rows={2} />
             </label>
             <p><strong>Default work state:</strong> Needs Prompt</p>
-            <button disabled={busy}>
-              {busy ? "Saving…" : "Create request"}
+            <button disabled={isPending("create_request")}>
+              {isPending("create_request") ? "Creating Development Request…" : "Create request"}
             </button>
+            {isPending("create_request") ? <span className="async-status" role="status"><span className="loading-spinner" aria-hidden="true"/>Saving request and screenshots…</span> : null}
           </Form>
         </details>
         <section className="panel">
@@ -1124,12 +1138,15 @@ export default function Development({
                       <article><h4>Current State</h4><p>{copilotState?.current_state_summary || "Needs Prompt"}</p></article>
                       <article><h4>Suggested Next Step</h4><p>{copilotState?.suggested_next_step || "Generate Summary & Prompt"}</p></article>
                     </div>
-                    <Form method="post" className="copilot-actions"><input type="hidden" name="intent" value="generate_summary"/><input type="hidden" name="request_id" value={detail.request.id}/><button>Generate Summary &amp; Prompt Context</button></Form>
-                    <Form method="post" className="copilot-actions"><input type="hidden" name="intent" value="generate_prompt"/><input type="hidden" name="request_id" value={detail.request.id}/><label>Target tool<select name="target_tool">{COPILOT_TARGETS.map(target=><option key={target}>{target}</option>)}</select></label><button>Generate Prompt</button></Form>
+                    <Form method="post" className="copilot-actions" aria-busy={isPending("generate_summary",detail.request.id)}><input type="hidden" name="intent" value="generate_summary"/><input type="hidden" name="request_id" value={detail.request.id}/><button disabled={isPending("generate_summary",detail.request.id)}>{isPending("generate_summary",detail.request.id)?"Generating summary and prompt context…":copilotState?.generated_at?"Regenerate Summary & Prompt Context":"Generate Summary & Prompt Context"}</button>{isPending("generate_summary",detail.request.id)?<span className="async-status" role="status"><span className="loading-spinner" aria-hidden="true"/>DEVOS is analyzing the request and evidence…</span>:null}</Form>
+                    <Form method="post" className="copilot-actions" aria-busy={isPending("generate_prompt",detail.request.id)}><input type="hidden" name="intent" value="generate_prompt"/><input type="hidden" name="request_id" value={detail.request.id}/><label>Target tool<select name="target_tool">{COPILOT_TARGETS.map(target=><option key={target}>{target}</option>)}</select></label><button disabled={isPending("generate_prompt",detail.request.id)}>{isPending("generate_prompt",detail.request.id)?`Generating ${String(navigation.formData?.get("target_tool")||"AI")} prompt…`:currentPrompt?"Regenerate Prompt":"Generate Prompt"}</button>{isPending("generate_prompt",detail.request.id)?<span className="async-status" role="status"><span className="loading-spinner" aria-hidden="true"/>Building the implementation prompt…</span>:null}</Form>
+                    <section ref={currentPromptRef} className="current-prompt-anchor" tabIndex={-1}>
+                    {actionData?.message?.includes("prompt version") ? <p className="form-message success" role="status">Prompt generated. Current Prompt is ready below.</p> : null}
                     {branchPromptChanged ? <p className="form-message error">Branch state changed since this prompt was generated. Regenerate with current branch state.</p> : null}
                     {currentPrompt ? <article className="current-prompt"><h4>Current Prompt · Version {currentPrompt.version}</h4><Form method="post"><input type="hidden" name="intent" value="edit_prompt"/><input type="hidden" name="request_id" value={detail.request.id}/><input type="hidden" name="prompt_id" value={currentPrompt.id}/><textarea name="prompt_text" rows={14} defaultValue={currentPrompt.edited_text || currentPrompt.generated_text}/><div className="copilot-actions"><button>Save Edit</button><button type="button" onClick={(event)=>navigator.clipboard.writeText((event.currentTarget.closest("form")?.elements.namedItem("prompt_text") as HTMLTextAreaElement).value)}>Copy Prompt</button></div></Form><Form method="post"><input type="hidden" name="intent" value="mark_prompt_sent"/><input type="hidden" name="request_id" value={detail.request.id}/><input type="hidden" name="prompt_id" value={currentPrompt.id}/><button>Mark Sent</button></Form></article>:null}
-                    <details><summary>Add Response</summary><Form method="post" encType="multipart/form-data"><input type="hidden" name="intent" value="add_response"/><input type="hidden" name="request_id" value={detail.request.id}/><label>Source<select name="entry_type">{["CODEX","CLAUDE","CHATGPT","GEMINI"].map(type=><option key={type}>{type}</option>)}</select></label><label>Response<textarea required name="content" rows={10}/></label><input type="file" name="attachments" accept="image/png,image/jpeg,image/webp" multiple/><button>Add &amp; Analyze Response</button></Form></details>
-                    <details><summary>Report Failure</summary><Form method="post" encType="multipart/form-data"><input type="hidden" name="intent" value="report_failure"/><input type="hidden" name="request_id" value={detail.request.id}/><label>Source<select name="entry_type">{["CODEX","CLAUDE","CHATGPT","GEMINI"].map(type=><option key={type}>{type}</option>)}</select></label><label>Logs / failure details<textarea required name="content" rows={10}/></label><input type="file" name="attachments" accept="image/png,image/jpeg,image/webp" multiple/><button>Analyze Failure</button></Form><Form method="post"><input type="hidden" name="intent" value="generate_follow_up"/><input type="hidden" name="request_id" value={detail.request.id}/><button>Generate Follow-up Prompt</button></Form></details>
+                    </section>
+                    <details><summary>Add Response</summary><Form method="post" encType="multipart/form-data" aria-busy={isPending("add_response",detail.request.id)}><input type="hidden" name="intent" value="add_response"/><input type="hidden" name="request_id" value={detail.request.id}/><label>Source<select name="entry_type">{["CODEX","CLAUDE","CHATGPT","GEMINI"].map(type=><option key={type}>{type}</option>)}</select></label><label>Response<textarea required name="content" rows={10}/></label><input type="file" name="attachments" accept="image/png,image/jpeg,image/webp" multiple/><button disabled={isPending("add_response",detail.request.id)}>{isPending("add_response",detail.request.id)?"Analyzing response…":"Add & Analyze Response"}</button>{isPending("add_response",detail.request.id)?<span className="async-status" role="status"><span className="loading-spinner" aria-hidden="true"/>Comparing reported claims with DEVOS evidence…</span>:null}</Form></details>
+                    <details><summary>Report Failure</summary><Form method="post" encType="multipart/form-data" aria-busy={isPending("report_failure",detail.request.id)}><input type="hidden" name="intent" value="report_failure"/><input type="hidden" name="request_id" value={detail.request.id}/><label>Source<select name="entry_type">{["CODEX","CLAUDE","CHATGPT","GEMINI"].map(type=><option key={type}>{type}</option>)}</select></label><label>Logs / failure details<textarea required name="content" rows={10}/></label><input type="file" name="attachments" accept="image/png,image/jpeg,image/webp" multiple/><button disabled={isPending("report_failure",detail.request.id)}>{isPending("report_failure",detail.request.id)?"Analyzing failure…":"Analyze Failure"}</button></Form><Form method="post" aria-busy={isPending("generate_follow_up",detail.request.id)}><input type="hidden" name="intent" value="generate_follow_up"/><input type="hidden" name="request_id" value={detail.request.id}/><button disabled={isPending("generate_follow_up",detail.request.id)}>{isPending("generate_follow_up",detail.request.id)?"Generating follow-up prompt…":"Generate Follow-up Prompt"}</button>{isPending("generate_follow_up",detail.request.id)?<span className="async-status" role="status"><span className="loading-spinner" aria-hidden="true"/>Using the full Development Conversation…</span>:null}</Form></details>
                     <section className="merge-readiness"><h4>Merge Readiness</h4><div><strong>{readiness?.level} · {readiness?.overall}/100</strong><span>Technical {readiness?.technical}/100</span><span>Workflow {readiness?.workflow}/100</span></div><p>{readiness?.explanation}</p>{readiness?.blockers.length ? <p className="form-message error">Hard blockers: {readiness.blockers.join(", ")}</p>:null}<small>Operational readiness score, not a probability.</small></section>
                     <section><h4>Screenshots</h4><div className="attachment-grid">{(copilot.attachments as any[]).map(a=><figure key={a.id}><a href={`/development/attachments/${a.id}`} target="_blank" rel="noreferrer"><img src={`/development/attachments/${a.id}`} alt={a.caption || a.original_filename}/></a><figcaption>{a.category} · {a.caption || a.original_filename}</figcaption></figure>)}</div><Form method="post" encType="multipart/form-data"><input type="hidden" name="intent" value="add_attachments"/><input type="hidden" name="request_id" value={detail.request.id}/><input required type="file" name="attachments" accept="image/png,image/jpeg,image/webp" multiple/><input name="attachment_caption" placeholder="Optional caption"/><button>Add screenshots</button></Form></section>
                     <section><h4>Development Conversation</h4><ol className="development-conversation">{(copilot.thread as any[]).map(entry=><li key={entry.id}><strong>{entry.entry_type}</strong><time>{entry.created_at}</time><p>{entry.content}</p></li>)}</ol></section>
