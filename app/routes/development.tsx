@@ -32,6 +32,7 @@ import { statusLabel, statusTone } from "../lib/development/status";
 import { environmentQaForRequest } from "../lib/development/environments.server";
 import { composeEnvironmentTestUrl } from "../lib/development/environments";
 import { getEnvironmentQaReadiness } from "../lib/development/environment-readiness.server";
+import { syncStatusMessage } from "../lib/development/sync-state";
 
 type DevelopmentEnvironment = AccessEnvironment &
   GitHubEnvironment & { linkedinadam_db: D1Database };
@@ -191,15 +192,13 @@ export async function action({ request, context }: Route.ActionArgs) {
 
   if (intent === "github_readiness_sync") {
     const result = await runManualGitHubReadinessSync(env, user);
-    if (
-      result.status === "rejected" ||
-      result.status === "skipped" ||
-      result.status === "failed"
-    )
+    if (result.status === "rejected" || result.status === "skipped" || result.status === "failed")
       return { error: result.error };
     return {
       ok: true,
-      message: `GitHub readiness sync completed: ${result.issues} issues and ${result.pullRequests} pull requests read.`,
+      message: result.status === "partial"
+        ? `Core GitHub data refreshed. ${result.result?.comparisons.deferred || 0} branch comparisons will continue on the next sync.`
+        : "GitHub sync complete",
     };
   }
 
@@ -393,13 +392,13 @@ export default function Development({
         </div>
         <div className="development-header-actions">
           <span
-            className={`github-status-chip ${github.lastRun?.status === "failed" ? "error" : githubConnection.connected ? "connected" : "offline"}`}
+            className={`github-status-chip ${github.lastRun?.freshness === "FAILED" ? "error" : githubConnection.connected ? "connected" : "offline"}`}
           >
             <span aria-hidden="true">●</span>
-            {github.lastRun?.status === "failed"
+            {github.lastRun?.freshness === "FAILED"
               ? "GitHub sync warning"
               : githubConnection.connected
-                ? `GitHub ${github.lastRun?.status || "connected"}`
+                ? `GitHub ${github.lastRun?.freshness?.replaceAll("_", " ") || "connected"}`
                 : "GitHub not connected"}
           </span>
           <a className="secondary-link" href="#new-request">
@@ -554,10 +553,13 @@ export default function Development({
         {github.lastRun ? (
           <section>
             <h3>Latest Run</h3>
+            <p className={github.lastRun.freshness === "FAILED" ? "form-message error" : "form-message"} role="status">
+              {syncStatusMessage(github.lastRun.status, github.lastRun.result)}
+            </p>
             <dl className="detail-overview">
               <div>
                 <dt>Status</dt>
-                <dd>{github.lastRun.status}</dd>
+                <dd>{github.lastRun.freshness.replaceAll("_", " ")}</dd>
               </div>
               <div>
                 <dt>Trigger</dt>
@@ -582,6 +584,18 @@ export default function Development({
                     ? "In progress"
                     : `${github.lastRun.duration_seconds}s`}
                 </dd>
+              </div>
+              <div>
+                <dt>Core</dt>
+                <dd>{github.lastRun.result ? `${github.lastRun.result.coreSync.status} · ${github.lastRun.result.coreSync.completed_at || "not completed"}` : "Legacy run · granular data unavailable"}</dd>
+              </div>
+              <div>
+                <dt>CI / Reviews</dt>
+                <dd>{github.lastRun.result ? `${github.lastRun.result.ci.status} / ${github.lastRun.result.reviews.status}` : "Granular data unavailable"}</dd>
+              </div>
+              <div>
+                <dt>Comparisons</dt>
+                <dd>{github.lastRun.result ? `${github.lastRun.result.comparisons.processed} processed · ${github.lastRun.result.comparisons.deferred} deferred` : "Granular data unavailable"}</dd>
               </div>
               <div>
                 <dt>Issues</dt>
@@ -616,7 +630,7 @@ export default function Development({
                 <dd>{github.lastRun.conflict_count}</dd>
               </div>
             </dl>
-            {github.lastRun.error_message ? (
+            {github.lastRun.freshness === "FAILED" && github.lastRun.error_message ? (
               <p className="form-message error" role="alert">
                 {github.lastRun.error_message}
               </p>

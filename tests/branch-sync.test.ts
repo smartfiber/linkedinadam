@@ -198,8 +198,11 @@ describe("DEVOS Branch Sync", () => {
       ),
     ).toBe(true);
     expect(route).toContain("Why DEVOS thinks these differ");
-    expect(route).toContain("showing last known branch observations");
+    expect(route).toContain("Last-known");
     expect(route).toContain("checkedAt");
+    expect(route).toContain("Core GitHub");
+    expect(route).toContain("Comparisons / patch equivalence");
+    expect(route).toContain("Data missing");
   });
 
   it("shows QA beside branch state without mutating QA", () => {

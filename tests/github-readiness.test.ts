@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AuthenticatedUser } from "../app/lib/auth.server";
 import { runManualGitHubReadinessSync } from "../app/lib/development/github-readiness.server";
 import { syncNetXRepository } from "../app/lib/development/sync.server";
-import type { GitHubIssueSnapshot, GitHubPullRequestCursor, GitHubPullRequestSnapshot, GitHubReadAdapter } from "../app/lib/integrations/github.server";
+import { GitHubAPIError, type GitHubIssueSnapshot, type GitHubPullRequestCursor, type GitHubPullRequestSnapshot, type GitHubReadAdapter } from "../app/lib/integrations/github.server";
 
 const owner: AuthenticatedUser = { email: "adam@net-x.io", displayName: "Adam", subject: "adam", role: "OWNER", source: "cloudflare-access" };
 const admin: AuthenticatedUser = { ...owner, email: "joseph@net-x.io", displayName: "Joseph", role: "ADMIN" };
@@ -22,7 +22,7 @@ function readOnlyAdapter(overrides: Partial<GitHubReadAdapter> = {}): GitHubRead
   };
 }
 
-function fakeDatabase(initialRunning = false) {
+function fakeDatabase(initialRunning = false, missingGranularSchema = false) {
   let running = initialRunning;
   let runRows = 0;
   const sql: string[] = [];
@@ -45,6 +45,7 @@ function fakeDatabase(initialRunning = false) {
         },
         async all() { return { results: [] }; },
         async run() {
+          if (missingGranularSchema && (statement.includes("outcome") || statement.includes("result_json"))) throw new Error("no such column: outcome");
           if (statement.includes("UPDATE github_sync_runs SET status = 'succeeded'") || statement.includes("UPDATE github_sync_runs SET status = 'failed'")) running = false;
           return { success: true, meta: { changes: 1 }, values };
         },
@@ -72,6 +73,7 @@ const pullRequest = (number: number, body: string | null): GitHubPullRequestSnap
 
 function reconciliationDatabase(seed?: { issues?: number[]; pullRequests?: number[] }) {
   let running = false; let nextRun = 1; let nextItem = 1;
+  let lastResultJson: string | null = null;
   const requests = new Map<string, { id: string; priority: string; why: string | null; owner: string | null; qa: string | null; notes: string | null }>();
   const items: Array<{ id: number; providerId: number; kind: string; number: number; requestId: string; payload: string; updatedAt: string }> = [];
   const links = new Map<string, { requestId: string; kind: string; number: number; url: string; payload: string }>();
@@ -95,6 +97,7 @@ function reconciliationDatabase(seed?: { issues?: number[]; pullRequests?: numbe
         async first() {
           if (statement.includes("INSERT INTO github_sync_runs")) { if (running) return null; running = true; return { id: nextRun++ }; }
           if (statement.includes("nextScheduledCursor")) return completedCursors.length ? { cursor_json: JSON.stringify(completedCursors.at(-1)) } : null;
+          if (statement.includes("SELECT result_json FROM github_sync_runs")) return lastResultJson ? { result_json: lastResultJson } : null;
           if (statement.includes("FROM development_links WHERE provider = 'github' AND type = ?")) { const found = [...links.values()].find(link => link.kind === values[0] && String(link.number) === String(values[1])); return found ? { development_request_id: found.requestId } : null; }
           if (statement.includes("FROM development_requests WHERE external_key")) return requests.get(String(values[0])) || null;
           if (statement.includes("FROM github_sync_items WHERE kind = ? AND provider_id")) { const found = items.find(item => item.kind === values[0] && item.providerId === values[1]); return found ? { id: found.id, development_request_id: found.requestId, github_updated_at: found.updatedAt, payload_json: found.payload } : null; }
@@ -126,6 +129,7 @@ function reconciliationDatabase(seed?: { issues?: number[]; pullRequests?: numbe
             if (!links.has(key)) links.set(key, { requestId: String(values[0]), kind: String(values[1]), number: Number(values[2]), url: String(values[3]), payload: String(values[4]) });
           }
           if (statement.includes("UPDATE development_requests SET next_action")) nextActions.set(String(values[1]), String(values[0]));
+          if (statement.includes("result_json = ?")) lastResultJson = String(values[7]);
           if (statement.includes("github_sync_completed")) { const metadata = JSON.parse(String(values[3])); if (metadata.nextScheduledCursor) completedCursors.push(metadata.nextScheduledCursor); }
           if (statement.includes("SET status = 'succeeded'") || statement.includes("SET status = 'failed'")) running = false;
           return { success: true, meta: { changes: 1 } };
@@ -167,6 +171,21 @@ describe("manual GitHub readiness sync", () => {
     expect(db.runRows).toBe(1);
     expect(result).toMatchObject({ status: "succeeded", runId: 1, branches: 3 });
     expect(db.sql.some(value => value.includes("SET status = 'succeeded'"))).toBe(true);
+  });
+
+  it("falls back to legacy completion before migration 0020 is applied", async () => {
+    const db = fakeDatabase(false, true);
+    const result = await runManualGitHubReadinessSync(environment(db), owner, { adapter: readOnlyAdapter() });
+    expect(result.status).toBe("succeeded");
+    expect(db.sql.some(value => value.includes("outcome = ?"))).toBe(true);
+    expect(db.sql.some(value => value.includes("SET status = 'succeeded'") && !value.includes("outcome"))).toBe(true);
+  });
+
+  it("classifies authentication failure before core refresh as failed", async () => {
+    const result = await runManualGitHubReadinessSync(environment(), owner, { adapter: readOnlyAdapter({
+      listPullRequests: async () => { throw new GitHubAPIError("GitHub API 401", 401, null, null, "/installation", null); },
+    }) });
+    expect(result).toMatchObject({ status: "failed", result: { authentication: { status: "FAILED" }, coreSync: { status: "FAILED" }, errorCategory: "authentication" } });
   });
 
   it("rejects a concurrent run before GitHub reads", async () => {
@@ -219,6 +238,55 @@ describe("manual GitHub readiness sync", () => {
 });
 
 describe("GitHub reconciliation and incremental scheduling", () => {
+  it("keeps migration 0020 additive and existing history untouched", () => {
+    const migration = readFileSync("migrations/0020_add_github_sync_result.sql", "utf8");
+    expect(migration).toContain("ALTER TABLE github_sync_runs ADD COLUMN outcome");
+    expect(migration).toContain("ALTER TABLE github_sync_runs ADD COLUMN result_json");
+    expect(migration).not.toMatch(/\b(?:DROP|DELETE|UPDATE)\b/i);
+  });
+
+  it("reports partial freshness metadata after core reconciliation and resumes deferred comparisons", async () => {
+    const db = reconciliationDatabase();
+    let firstRun = true; let calls = 0; const secondRunHeads: string[] = [];
+    const adapter = readOnlyAdapter({
+      listIssues: async () => [issue(700)],
+      listPullRequests: async () => [pullRequest(701, "Closes #700")],
+      compare: async (_base, head) => {
+        calls += 1;
+        if (firstRun && calls === 2) throw new Error("Too many subrequests by single Worker invocation.");
+        if (!firstRun) secondRunHeads.push(head);
+        return { status: "ahead", aheadBy: 1, behindBy: 0, files: [] };
+      },
+    });
+    const partial = await syncNetXRepository(db, environment(db), { trigger: "manual_readiness", adapter });
+    expect(partial).toMatchObject({ status: "partial", issues: 1, pullRequests: 1, result: { coreSync: { status: "SUCCESS" }, comparisons: { status: "PARTIAL", processed: 2, deferred: 2 }, errorCategory: "worker_subrequest_limit", comparisonCursor: 2 } });
+    firstRun = false; calls = 0;
+    const recovered = await syncNetXRepository(db, environment(db), { trigger: "manual_readiness", adapter });
+    expect(recovered).toMatchObject({ status: "succeeded", result: { comparisons: { status: "SUCCESS", processed: 4, deferred: 0 } } });
+    expect(secondRunHeads[0]).toBe("dev");
+    expect(db.items.filter(item => item.number === 700 || item.number === 701)).toHaveLength(2);
+  });
+
+  it("preserves last-known branch observations when a comparison is deferred", async () => {
+    const source = readFileSync("app/lib/development/sync.server.ts", "utf8");
+    expect(source).toContain("ON CONFLICT(development_request_id, branch) DO UPDATE");
+    expect(source).not.toMatch(/DELETE FROM development_branch_states/i);
+    expect(source).not.toMatch(/UPDATE development_branch_states SET state = 'unknown'/i);
+  });
+
+  it("does not advance the PR traversal cursor on a partial comparison run", async () => {
+    const db = reconciliationDatabase(); const seen: GitHubPullRequestCursor[] = []; let fail = true;
+    const adapter = readOnlyAdapter({
+      listIssues: async () => [issue(710)],
+      async listScheduledPullRequests(cursor) { seen.push(cursor); return { items: [pullRequest(711, "Closes #710")], nextCursor: { scope: "open", page: 2 }, cycleComplete: false }; },
+      compare: async () => { if (fail) { fail = false; throw new Error("Too many subrequests by single Worker invocation."); } return { status: "ahead", aheadBy: 1, behindBy: 0, files: [] }; },
+    });
+    const partial = await syncNetXRepository(db, environment(db), { trigger: "scheduled", adapter });
+    expect(partial.status).toBe("partial");
+    expect(db.completedCursors).toEqual([]);
+    await syncNetXRepository(db, environment(db), { trigger: "scheduled", adapter });
+    expect(seen).toEqual([{ scope: "open", page: 1 }, { scope: "open", page: 1 }]);
+  });
   it("allows one GitHub object on multiple requests while keeping each request/object pair unique", () => {
     const migration = readFileSync("migrations/0019_allow_multi_request_github_links.sql", "utf8");
     expect(migration).toContain("UNIQUE(development_request_id, provider, type, external_id)");
