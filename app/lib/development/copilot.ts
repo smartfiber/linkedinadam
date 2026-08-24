@@ -36,7 +36,8 @@ export function buildBranchSyncPrompt(e: BranchEvidence) {
 }
 
 export function buildBatchReconciliationPrompt(items: BranchEvidence[]) {
-  return `# DEVOS Branch Reconciliation Audit\n\nDo NOT attempt to make Adam, Joe, dev, and main identical. Do NOT merge one branch wholesale into another. ${safety}\n\nTreat every Development Request independently. Verify evidence freshness and patch equivalence, assess QA/CI, and recommend narrow remediation.\n\n${items.map((item, index) => `## ${index + 1}. ${item.title}\n${buildBranchSyncPrompt(item)}`).join("\n\n")}\n\nReturn this table:\n| Request | Adam | Joe | dev | main | Difference | Evidence Freshness | QA/CI | Recommended Action | Risk |\n\nThen provide an ordered remediation plan. Do not perform remediation automatically.`;
+  const included=items.slice(0,25);const deferred=Math.max(0,items.length-included.length);
+  return `# DEVOS Branch Reconciliation Audit\n\nDo NOT attempt to make Adam, Joe, dev, and main identical. Do NOT merge one branch wholesale into another. ${safety}\n\nTreat every Development Request independently. Verify evidence freshness and patch equivalence, assess QA/CI, and recommend narrow remediation.${deferred?` This bounded prompt includes 25 requests; generate another prompt for the remaining ${deferred}.`:""}\n\n${included.map((item, index) => `## ${index + 1}. ${item.title}\n${buildBranchSyncPrompt(item)}`).join("\n\n")}\n\nReturn this table:\n| Request | Adam | Joe | dev | main | Difference | Evidence Freshness | QA/CI | Recommended Action | Risk |\n\nThen provide an ordered remediation plan. Do not perform remediation automatically.`.slice(0,100_000);
 }
 
 export function evidenceChanged(a: BranchEvidence, b: BranchEvidence) {

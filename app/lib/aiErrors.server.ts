@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 
-type AIOperation = "post" | "image" | "plan" | "recommendation";
+type AIOperation = "post" | "image" | "plan" | "recommendation" | { label: string };
 
 function safeDiagnosticValue(value: unknown) {
   if (typeof value !== "string") {
@@ -38,7 +38,7 @@ export function getSafeOpenAIErrorMessage(
   error: unknown,
   operation: AIOperation,
 ) {
-  const subject =
+  const subject = typeof operation === "object" ? operation.label :
     operation === "image"
       ? "image"
       : operation === "plan"
