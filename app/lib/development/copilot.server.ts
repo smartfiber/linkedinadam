@@ -3,6 +3,7 @@ import { getSafeOpenAIErrorMessage } from "../aiErrors.server";
 import type { DevelopmentActor } from "./types";
 import { assertCanWriteDevelopment } from "./service.server";
 import { COPILOT_ENTRY_TYPES, COPILOT_TARGETS, DEVELOPMENT_WORK_STATES, buildBatchReconciliationPrompt, buildBranchSyncPrompt, type BranchEvidence, type DevelopmentWorkState } from "./copilot";
+import { buildDevelopmentCopilotContext, isContextOverflow, withContextOverflowFallback } from "./context-budget";
 
 export const DEVELOPMENT_COPILOT_MODEL = "gpt-5-mini";
 const NOT_INITIALIZED = "Development Copilot not initialized";
@@ -17,7 +18,7 @@ export async function getCopilotContext(db: D1Database, requestId: string) {
   try {
     const [state, prompts, thread, attachments, analyses] = await Promise.all([
       db.prepare("SELECT * FROM development_copilot_state WHERE development_request_id=?").bind(requestId).first(),
-      db.prepare("SELECT * FROM development_prompts WHERE development_request_id=? ORDER BY version DESC").bind(requestId).all(),
+      db.prepare("SELECT id,development_request_id,version,prompt_type,target_tool,target_model,generated_text,edited_text,evidence_snapshot_json,generated_by,generated_provider,generated_model,generated_at,sent_at,sent_by,is_current FROM development_prompts WHERE development_request_id=? ORDER BY version DESC").bind(requestId).all(),
       db.prepare("SELECT * FROM development_thread_entries WHERE development_request_id=? ORDER BY created_at,id").bind(requestId).all(),
       db.prepare("SELECT id,development_request_id,original_filename,safe_filename,mime_type,size_bytes,uploaded_by,uploaded_at,caption,category,display_order,related_thread_entry_id,related_qa_attempt_id FROM development_attachments WHERE development_request_id=? ORDER BY display_order,uploaded_at").bind(requestId).all(),
       db.prepare("SELECT * FROM development_response_analyses WHERE development_request_id=? ORDER BY analyzed_at DESC").bind(requestId).all(),
@@ -57,39 +58,52 @@ async function respond(apiKey: string, instruction: string, content: string, ima
   return response.output_text;
 }
 
-export async function generateSummary(env: CopilotEnvironment, actor: DevelopmentActor, requestRecord: any, github: any, attachments: any[]) {
-  assertCanWriteDevelopment(actor); if (!env.OPENAI_API_KEY) throw new Error("The OpenAI API key is not configured.");
-  const imageInputs: { mime_type: string; bytes: ArrayBuffer }[] = [];
-  let visualAvailable = true;
-  for (const attachment of attachments.slice(0, 4)) { const stored=await env.linkedinadam_db.prepare("SELECT storage_key,mime_type FROM development_attachments WHERE id=? AND development_request_id=?").bind(attachment.id,requestRecord.id).first<{storage_key:string;mime_type:string}>(); if(!stored)continue; const object = await env.LINKEDIN_IMAGES.get(stored.storage_key); if (object) imageInputs.push({ mime_type: stored.mime_type, bytes: await object.arrayBuffer() }); }
-  let raw: string;
-  try {
-    raw = await respond(env.OPENAI_API_KEY, "You are DEVOS Development Copilot in Summarizer mode (READ + ANALYZE only). Return JSON with laymanSummary, technicalInterpretation, currentState, suggestedNextStep, visualObservations array. Describe only visible screenshot evidence and explicitly mark uncertainty. Never claim to have changed code or verified unprovided facts.", JSON.stringify({ request: requestRecord, github, screenshots: attachments.map((a: any, i: number) => ({ number: i + 1, category: a.category, caption: a.caption })) }), imageInputs);
-  } catch (error) {
-    if (imageInputs.length && error instanceof OpenAI.BadRequestError) { visualAvailable = false; raw = await respond(env.OPENAI_API_KEY, "You are DEVOS Development Copilot in Summarizer mode. Return JSON with laymanSummary, technicalInterpretation, currentState, suggestedNextStep, visualObservations array. Image input is unavailable; use captions only and do not infer unseen content.", JSON.stringify({ request: requestRecord, github, imageNotice: "Visual analysis unavailable", captions: attachments.map((a: any) => a.caption) })); }
-    else throw new Error(getSafeOpenAIErrorMessage(error, "plan"));
-  }
-  const parsed = parseJson(raw); const now = new Date().toISOString();
-  await env.linkedinadam_db.batch([
-    env.linkedinadam_db.prepare(`INSERT INTO development_copilot_state (development_request_id,work_state,layman_summary,technical_interpretation,current_state_summary,suggested_next_step,visual_observations_json,generated_provider,generated_model,generated_at,updated_at) VALUES (?,'NEEDS_PROMPT',?,?,?,?,?,'OpenAI',?,?,CURRENT_TIMESTAMP) ON CONFLICT(development_request_id) DO UPDATE SET layman_summary=excluded.layman_summary,technical_interpretation=excluded.technical_interpretation,current_state_summary=excluded.current_state_summary,suggested_next_step=excluded.suggested_next_step,visual_observations_json=excluded.visual_observations_json,generated_provider=excluded.generated_provider,generated_model=excluded.generated_model,generated_at=excluded.generated_at,updated_at=CURRENT_TIMESTAMP`).bind(requestRecord.id, clean(parsed.laymanSummary), clean(parsed.technicalInterpretation), clean(parsed.currentState), clean(parsed.suggestedNextStep), JSON.stringify({ available: visualAvailable, observations: parsed.visualObservations || [] }), DEVELOPMENT_COPILOT_MODEL, now),
-    env.linkedinadam_db.prepare("INSERT INTO development_thread_entries (id,development_request_id,entry_type,actor_identity,provider,model,content,metadata_json) VALUES (?,?,'DEVOS','Development Copilot','OpenAI',?,?,?)").bind(crypto.randomUUID(), requestRecord.id, DEVELOPMENT_COPILOT_MODEL, clean(parsed.laymanSummary), JSON.stringify({ kind: "summary", visualAvailable })),
-  ]);
-  return { ...parsed, visualAvailable };
+function safeCopilotError(error:unknown,label:string){if(error instanceof Error&&error.message.startsWith("Development Copilot context is too large"))return error;return new Error(getSafeOpenAIErrorMessage(error,{label}));}
+function providerErrorDiagnostic(error:unknown){return error&&typeof error==="object"?{status:(error as any).status||null,code:String((error as any).code||"").slice(0,80)||null,type:String((error as any).type||"").slice(0,80)||null}:{};}
+
+async function boundedResponse(input:{env:CopilotEnvironment;operation:string;instruction:string;record:any;copilot:any;currentInstruction:string;images?:{mime_type:string;bytes:ArrayBuffer}[]}){
+  let lastDiagnostics:any=null;let visualAvailable=true;
+  try{
+    const result=await withContextOverflowFallback(async mode=>{
+      const built=buildDevelopmentCopilotContext({operation:input.operation,mode,record:input.record,copilot:input.copilot,currentInstruction:input.currentInstruction,providerInstruction:input.instruction,availableImageCount:(input.images||[]).length});lastDiagnostics=built.diagnostics;
+      console.info("Development Copilot context diagnostics",built.diagnostics);
+      const images=(input.images||[]).slice(0,built.imageLimit);
+      try{return await respond(input.env.OPENAI_API_KEY!,input.instruction,built.serialized,images);}catch(error){if(images.length&&error instanceof OpenAI.BadRequestError&&!isContextOverflow(error)){visualAvailable=false;return respond(input.env.OPENAI_API_KEY!,input.instruction,built.serialized,[]);}throw error;}
+    });
+    console.info("Development Copilot provider result",{operation:input.operation,model:DEVELOPMENT_COPILOT_MODEL,compactMode:result.mode==="aggressive",retried:result.retried,result:"success"});
+    return {text:result.value,diagnostics:lastDiagnostics,visualAvailable,compactMode:result.mode==="aggressive"};
+  }catch(error){console.warn("Development Copilot provider result",{operation:input.operation,model:DEVELOPMENT_COPILOT_MODEL,compactMode:lastDiagnostics?.compactMode||false,result:"error",...providerErrorDiagnostic(error)});throw error;}
 }
 
-function requestPromptContext(record: any, copilot: any, kind: string) {
-  return { kind, request: record.request, links: record.links, branches: record.branches, qa: record.qa, approvals: record.approvals, githubItems: record.githubItems, copilotState: copilot.state, previousPrompts: copilot.prompts, previousConversation: copilot.thread, analyses: copilot.analyses, attachments: copilot.attachments };
+export async function generateSummary(env: CopilotEnvironment, actor: DevelopmentActor, record: any, copilot: any) {
+  assertCanWriteDevelopment(actor); if (!env.OPENAI_API_KEY) throw new Error("The OpenAI API key is not configured.");
+  const imageInputs: { mime_type: string; bytes: ArrayBuffer }[] = [];
+  let imageBytes=0;
+  for (const attachment of [...copilot.attachments].slice(-4).reverse()) { if(imageInputs.length>=2||Number(attachment.size_bytes||0)>4*1024*1024||imageBytes+Number(attachment.size_bytes||0)>6*1024*1024)continue;const stored=await env.linkedinadam_db.prepare("SELECT storage_key,mime_type FROM development_attachments WHERE id=? AND development_request_id=?").bind(attachment.id,record.request.id).first<{storage_key:string;mime_type:string}>(); if(!stored)continue; const object = await env.LINKEDIN_IMAGES.get(stored.storage_key); if (object){const bytes=await object.arrayBuffer();imageBytes+=bytes.byteLength;imageInputs.push({ mime_type: stored.mime_type, bytes });} }
+  let result;
+  try {
+    result=await boundedResponse({env,operation:"Development Copilot summary",instruction:"You are DEVOS Development Copilot in Summarizer mode (READ + ANALYZE only). Return JSON with laymanSummary, technicalInterpretation, currentState, suggestedNextStep, visualObservations array. Describe only visible screenshot evidence and explicitly mark uncertainty. Never claim to have changed code or verified unprovided facts.",record,copilot,currentInstruction:"Generate summary and prompt context for the current Development Request.",images:imageInputs});
+  } catch (error) {
+    throw safeCopilotError(error,"Development Copilot summary");
+  }
+  const parsed = parseJson(result.text); const now = new Date().toISOString();
+  await env.linkedinadam_db.batch([
+    env.linkedinadam_db.prepare(`INSERT INTO development_copilot_state (development_request_id,work_state,layman_summary,technical_interpretation,current_state_summary,suggested_next_step,visual_observations_json,generated_provider,generated_model,generated_at,updated_at) VALUES (?,'NEEDS_PROMPT',?,?,?,?,?,'OpenAI',?,?,CURRENT_TIMESTAMP) ON CONFLICT(development_request_id) DO UPDATE SET layman_summary=excluded.layman_summary,technical_interpretation=excluded.technical_interpretation,current_state_summary=excluded.current_state_summary,suggested_next_step=excluded.suggested_next_step,visual_observations_json=excluded.visual_observations_json,generated_provider=excluded.generated_provider,generated_model=excluded.generated_model,generated_at=excluded.generated_at,updated_at=CURRENT_TIMESTAMP`).bind(record.request.id, clean(parsed.laymanSummary), clean(parsed.technicalInterpretation), clean(parsed.currentState), clean(parsed.suggestedNextStep), JSON.stringify({ available: result.visualAvailable, observations: parsed.visualObservations || [] }), DEVELOPMENT_COPILOT_MODEL, now),
+    env.linkedinadam_db.prepare("INSERT INTO development_thread_entries (id,development_request_id,entry_type,actor_identity,provider,model,content,metadata_json) VALUES (?,?,'DEVOS','Development Copilot','OpenAI',?,?,?)").bind(crypto.randomUUID(), record.request.id, DEVELOPMENT_COPILOT_MODEL, clean(parsed.laymanSummary), JSON.stringify({ kind: "summary", visualAvailable:result.visualAvailable, contextDiagnostics:result.diagnostics, compactMode:result.compactMode })),
+  ]);
+  return { ...parsed, visualAvailable:result.visualAvailable };
 }
 
 export async function generateImplementationPrompt(env: CopilotEnvironment, actor: DevelopmentActor, record: any, targetTool: string, kind = "implementation", branchEvidence?: BranchEvidence) {
   assertCanWriteDevelopment(actor); if (!COPILOT_TARGETS.includes(targetTool as any)) targetTool = "Other";
   const copilot = await getCopilotContext(env.linkedinadam_db, record.request.id); if (!copilot.initialized) throw new Error(NOT_INITIALIZED);
-  let generated: string; const snapshot = requestPromptContext(record, copilot, kind);
-  if (kind === "branch_sync" && branchEvidence) generated = buildBranchSyncPrompt(branchEvidence);
+  let generated: string; let snapshot:any;
+  if (kind === "branch_sync" && branchEvidence) {generated = buildBranchSyncPrompt(branchEvidence);snapshot={kind,branchEvidence};}
   else {
     if (!env.OPENAI_API_KEY) throw new Error("The OpenAI API key is not configured.");
     const instruction = kind === "follow_up" ? "Continue from the current state. Reconcile the original request, prior prompts and responses, latest failure, GitHub/branch/QA/CI evidence. Do not restart unless evidence warrants it." : "Create a detailed implementation prompt for the selected coding assistant.";
-    generated = await respond(env.OPENAI_API_KEY, `You are DEVOS Prompt Engineer (READ + ANALYZE + DRAFT; non-executing). ${instruction} Require diagnosis of current code, narrow scope, preservation of newer architecture and human fields, explicit tests and files, no push/merge/deploy unless authorized, and a structured final response. Do not include secrets.`, JSON.stringify(snapshot));
+    const operation=kind==="follow_up"?"Development Copilot follow-up prompt":"Development Copilot prompt";
+    try{const result=await boundedResponse({env,operation,instruction:`You are DEVOS Prompt Engineer (READ + ANALYZE + DRAFT; non-executing). ${instruction} Require diagnosis of current code, narrow scope, preservation of newer architecture and human fields, explicit tests and files, no push/merge/deploy unless authorized, and a structured final response. Do not include secrets.`,record,copilot,currentInstruction:instruction});generated=result.text;snapshot=buildDevelopmentCopilotContext({operation,mode:result.compactMode?"aggressive":"normal",record,copilot,currentInstruction:instruction}).context;}catch(error){throw safeCopilotError(error,operation);}
   }
   const next = ((copilot.prompts[0] as any)?.version || 0) + 1; const id = crypto.randomUUID();
   await env.linkedinadam_db.batch([
@@ -109,7 +123,8 @@ export async function addAndAnalyzeResponse(env: CopilotEnvironment, actor: Deve
   const entryId = crypto.randomUUID(); const safeContent = clean(content); if (!safeContent) throw new Error("Response or failure details are required.");
   await env.linkedinadam_db.prepare("INSERT INTO development_thread_entries (id,development_request_id,entry_type,actor_identity,provider,content,metadata_json) VALUES (?,?,?,?,?,?,?)").bind(entryId, record.request.id, entryType, actor.email, entryType, safeContent, JSON.stringify({ kind: isFailure ? "failure_report" : "model_response" })).run();
   if (!env.OPENAI_API_KEY) return { analyzed: false, entryId };
-  const analysisRaw = await respond(env.OPENAI_API_KEY, `You are DEVOS ${isFailure ? "Failure Analyst" : "Response Analyst"} (READ + ANALYZE${isFailure ? " + DRAFT" : ""}; non-executing). Return JSON: result (Success|Partial|Failure|Needs Clarification|Ready for Review), plainEnglishResult, importantFacts array of {fact,provenance:'Reported by ${entryType}'|'Verified by GitHub'|'Unverified'}, diagnosis, rootCause, filesChanged, tests, branch,commit,push,pr,schema,migration,securityImpact,blockers,recommendedNextStep,whatIsUncertain,priorWorkStillValid. Only call a claim Verified by GitHub when it appears in the supplied authoritative GitHub data.`, JSON.stringify({ authoritative: { githubItems: record.githubItems, branches: record.branches, qa: record.qa, approvals: record.approvals }, reported: safeContent }));
+  const operation=isFailure?"Development Copilot failure analysis":"Development Copilot response analysis";let analysisRaw:string;
+  try{const copilot=await getCopilotContext(env.linkedinadam_db,record.request.id);const response=await boundedResponse({env,operation,instruction:`You are DEVOS ${isFailure ? "Failure Analyst" : "Response Analyst"} (READ + ANALYZE${isFailure ? " + DRAFT" : ""}; non-executing). Return JSON: result (Success|Partial|Failure|Needs Clarification|Ready for Review), plainEnglishResult, importantFacts array of {fact,provenance:'Reported by ${entryType}'|'Verified by GitHub'|'Unverified'}, diagnosis, rootCause, filesChanged, tests, branch,commit,push,pr,schema,migration,securityImpact,blockers,recommendedNextStep,whatIsUncertain,priorWorkStillValid. Only call a claim Verified by GitHub when it appears in the supplied authoritative GitHub data.`,record,copilot,currentInstruction:isFailure?"Analyze the latest reported failure and preserve useful prior work.":"Analyze the latest pasted model response and compare claims with authoritative evidence."});analysisRaw=response.text;}catch(error){throw safeCopilotError(error,operation);}
   const a = parseJson(analysisRaw); const analysisId = crypto.randomUUID();
   const allowedResults=["Success","Partial","Failure","Needs Clarification","Ready for Review"];
   const result=allowedResults.includes(a.result)?a.result:"Needs Clarification";
