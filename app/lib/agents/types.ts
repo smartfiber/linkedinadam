@@ -1,4 +1,4 @@
-export type AgentCategory = "Development" | "Content & LinkedIn" | "Marketing" | "Cross-functional" | "Existing Automation";
+export type AgentCategory = "Development" | "Content & LinkedIn" | "Marketing" | "Growth" | "Cross-functional" | "Existing Automation";
 export type AgentCapability = "READ" | "ANALYZE" | "DRAFT" | "MODIFY_SANDBOX" | "APPROVAL_REQUIRED" | "PROHIBITED";
 export type AgentStatus = "active" | "paused" | "waiting" | "error";
 export type AgentDefinition = {

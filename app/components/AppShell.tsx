@@ -4,10 +4,8 @@ import { useEffect, useState, type ReactNode } from "react";
 const navigation = [
   { to: "/", label: "Command Center", icon: "⌂", end: true },
   { to: "/development", label: "Development", icon: "◇" },
+  { to: "/growth", label: "Growth", icon: "↗" },
   { to: "/content-linkedin", label: "Content & LinkedIn", icon: "✦" },
-  { to: "/people", label: "People", icon: "♙", future: true },
-  { to: "/outreach", label: "Outreach", icon: "↗", future: true },
-  { to: "/newsletters", label: "Newsletters", icon: "▤", future: true },
   { to: "/agents", label: "Agents", icon: "◎" },
   { to: "/#activity", label: "Activity", icon: "◷", end: true },
   { to: "/#settings", label: "Settings", icon: "⚙", future: true, end: true },
@@ -21,6 +19,7 @@ export function isNavigationItemActive(label:string,pathname:string,hash:string)
   if (label === "Settings") return pathname === "/" && hash === "#settings";
   if (label === "Content & LinkedIn") return contentRoutes.has(pathname) || pathname.startsWith("/content/") || pathname.startsWith("/employees/");
   if (label === "Development") return pathname === "/development" || pathname.startsWith("/development/");
+  if (label === "Growth") return pathname === "/growth" || pathname.startsWith("/growth/") || ["/people","/companies","/outreach","/newsletters"].includes(pathname);
   if (label === "Agents") return pathname === "/agents" || pathname.startsWith("/agents/");
   const item=navigation.find(candidate=>candidate.label === label);
   return item ? pathname === item.to : false;

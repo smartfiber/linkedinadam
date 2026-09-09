@@ -14,6 +14,8 @@ export default [
   route("agents", "routes/agents.tsx"),
   route("agents/:agentSlug", "routes/agent-detail.tsx"),
   route("content-linkedin", "routes/content-linkedin.tsx"),
+  route("growth/:module?", "routes/growth.tsx"),
+  route("companies", "routes/companies.tsx"),
   route("people", "routes/people.tsx"),
   route("outreach", "routes/outreach.tsx"),
   route("newsletters", "routes/newsletters.tsx"),
