@@ -34,7 +34,7 @@ export default function Growth(){
     <nav className="growth-nav" aria-label="Growth workspace">{modules.map(([key,label])=><Link key={key} className={(module==="command"&&!key)||module===key?"active":""} to={key?`/growth/${key}`:"/growth"}>{label}</Link>)}</nav>
     {actionData&&("error" in actionData)&&actionData.error?<p className="growth-alert error">{actionData.error}</p>:null}
     {actionData&&("ok" in actionData)&&actionData.ok?<p className="growth-alert success">{actionData.ok}</p>:null}
-    {!snapshot.initialized?<NotInitialized/>:<Module module={module} data={snapshot} role={user.role}/>} 
+    {!snapshot.initialized?<NotInitialized/>:<Module module={module} data={snapshot} role={user.role}/>}
   </main>;
 }
 

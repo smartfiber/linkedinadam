@@ -74,21 +74,19 @@ describe("Content & LinkedIn navigation organization", () => {
     expect(routes).toContain(`\"${route}\"`);
   });
 
-  it("groups working routes and labels future areas without fake route modules", () => {
+  it("groups working Content, Development, and Growth routes", () => {
     expect(appShell).toContain("Content & LinkedIn");
     for (const href of [
       "/content-linkedin",
       "/development",
-      "/people",
-      "/outreach",
-      "/newsletters",
+      "/growth",
       "/agents",
     ])
       expect(appShell).toContain(`to: \"${href}\"`);
-    for (const label of ["People", "Outreach", "Newsletters", "Settings"])
-      expect(appShell).toMatch(
-        new RegExp(`label: \"${label}\"[\\s\\S]{0,80}future: true`),
-      );
+    expect(appShell).toContain('label: "Growth"');
+    expect(appShell).not.toMatch(
+      /label: "(?:People|Outreach|Newsletters)"[\s\S]{0,80}future: true/,
+    );
   });
 
   it("does not introduce replacement content or prospect tables", () => {
